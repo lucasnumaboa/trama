@@ -85,6 +85,8 @@ export function describeWorkflow(name, workflow, objectInfo) {
       else kind = 'number';
 
       const leaf = input.split('.').pop();
+      // Prompt de sistema de um reescritor de prompt: não é a instrução do usuário.
+      const internal = kind === 'text' && /system prompt|prompt de sistema/i.test(`${title} ${input}`);
       fields.push({
         id: `${id}.${input}`,
         nodeId: id,
@@ -99,7 +101,8 @@ export function describeWorkflow(name, workflow, objectInfo) {
         max: opts.max,
         step: opts.step,
         tooltip: opts.tooltip,
-        basic: ['text', 'seed', 'model'].includes(kind) || IMPORTANT.has(leaf),
+        basic: !internal && (['text', 'seed', 'model'].includes(kind) || IMPORTANT.has(leaf)),
+        internal: internal || undefined,
         acceptsText: kind === 'text' || kind === 'string',
       });
     }

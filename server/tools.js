@@ -187,9 +187,16 @@ function workflowSummary(d) {
     name: d.name,
     about: clip(d.notes.join(' ').replace(/\s+/g, ' ').replace(/[#*`]/g, ''), 280) || undefined,
     media_inputs: d.mediaInputs.map((m) => ({ slot: m.id, kind: m.kind, title: m.title })),
-    text_fields: d.fields.filter((f) => f.kind === 'text').map((f) => ({ id: f.id, node: f.nodeTitle })),
+    prompt_field: promptField(d)?.id,
+    text_fields: d.fields.filter((f) => f.kind === 'text' && !f.internal).map((f) => ({ id: f.id, node: f.nodeTitle })),
     outputs: [...new Set(d.outputs.map((o) => o.kind))],
   };
+}
+
+// O campo de texto principal: o prompt positivo (não o negativo nem um prompt de sistema).
+export function promptField(d) {
+  const texts = d.fields.filter((f) => f.kind === 'text' && !f.internal && !/negative|negativ/i.test(`${f.input} ${f.nodeTitle}`));
+  return texts.find((f) => /(^|\.)(prompt|text|value)$/.test(f.input)) || texts[0];
 }
 
 function workflowDetail(d) {
@@ -209,7 +216,13 @@ function workflowDetail(d) {
     main_fields: d.fields.filter((f) => f.basic).map(field),
     other_fields: d.fields
       .filter((f) => !f.basic)
-      .map((f) => ({ id: f.id, label: f.label, node: f.nodeTitle, default: typeof f.default === 'string' ? clip(f.default, 80) : f.default })),
+      .filter((f) => !f.internal)
+      .map((f) => ({
+        id: f.id, label: f.label, node: f.nodeTitle, default: typeof f.default === 'string' ? clip(f.default, 80) : f.default,
+        ...(f.kind === 'combo' && f.options?.length <= 25 ? { options: f.options } : {}),
+      })),
+    // Campo onde vai a instrução/descrição do usuário (o padrão é só o exemplo do template).
+    prompt_field: promptField(d)?.id,
     outputs: d.outputs.map((o) => ({ kind: o.kind, node: o.title })),
   };
 }
@@ -290,7 +303,13 @@ async function generate(ctx, { name, values = {}, inputs = {}, allowDefault = fa
       }
     }
   }
-  const mainText = d.fields.filter((f) => f.kind === 'text').map((f) => resolved[f.id] ?? f.default).find((t) => t && String(t).trim());
+  // Sem a instrução, o workflow roda com o texto de exemplo do template e devolve
+  // sempre a mesma coisa (ex.: "Replace costumes for the character").
+  const pf = promptField(d);
+  if (pf && !allowDefault && !String(resolved[pf.id] ?? '').trim()) {
+    throw new Error(`Falta a instrução: passe o texto em values["${pf.id}"] (${pf.nodeTitle}). Sem ele o workflow usa o exemplo do template "${clip(String(pf.default || ''), 60)}".`);
+  }
+  const mainText = (pf && resolved[pf.id]) || d.fields.filter((f) => f.kind === 'text' && !f.internal).map((f) => resolved[f.id] ?? f.default).find((t) => t && String(t).trim());
   const kind = d.outputs[0]?.kind || 'image';
   const recipe = { tool: 'run_workflow', workflow: d.name, values, inputs, ...(allowDefault ? { allow_default_inputs: true } : {}) };
 

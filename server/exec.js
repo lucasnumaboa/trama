@@ -33,6 +33,10 @@ function coerce(field, value) {
   }
   if (field.kind === 'bool') return value === true || value === 'true' || value === 1;
   if ((field.kind === 'model' || field.kind === 'combo') && field.options && !field.options.includes(value)) {
+    // "9:16 (Portrait)" -> "9:16 (Portrait Widescreen)": aceita quando só uma opção começa igual.
+    const head = String(value).split(' (')[0].trim();
+    const near = field.options.filter((o) => typeof o === 'string' && o.split(' (')[0].trim() === head);
+    if (head && near.length === 1) return near[0];
     throw new Error(`"${field.label}" (${field.id}) não aceita "${value}". Opções: ${field.options.slice(0, 20).join(', ')}`);
   }
   return value;
