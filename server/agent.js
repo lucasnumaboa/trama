@@ -54,7 +54,9 @@ Regras:
 - Respostas curtas e diretas. Não repita listas de parâmetros para o usuário.
 
 Modelos padrão por categoria (definidos pelo usuário nas Configurações). Quando o pedido couber numa categoria, use o modelo padrão dela. Se o padrão não aceita as entradas do pedido (ex.: o padrão é texto → vídeo e o usuário quer animar uma imagem), use a opção da mesma categoria que aceita essas entradas, preferindo a mesma família de modelo. Use outro modelo pelo nome quando o usuário pedir. Para trocar a voz de um áudio, use a categoria Edição de voz.
-${capabilityPromptBlock()}
+${capabilityPromptBlock(p.models || {})}
+
+Quando o usuário cita itens no meio do texto ("o personagem [Imagem 1 …] abraça o [Imagem 2 …]"), a posição importa: use cada item no papel que o texto dá a ele e, nos prompts dos workflows com várias referências, siga a numeração (<Picture 1>, <Picture 2>…) na mesma ordem.
 
 Catálogo atual de workflows (entradas → saídas). Escolha o que combina com o pedido: para animar uma imagem, use um de imagem → vídeo; não use um workflow de outra finalidade adaptando as entradas. Leia com get_workflow antes de rodar.
 ${catalog || '(não consegui ler o catálogo agora; use list_workflows)'}
@@ -62,13 +64,28 @@ ${catalog || '(não consegui ler o catálogo agora; use list_workflows)'}
 O projeto tem ${p.assets.length} cards agora.`;
 }
 
-function attachmentNote(p, ids) {
-  const list = ids
-    .map((id) => p.assets.find((a) => a.id === id))
-    .filter(Boolean)
-    .map((a) => `${a.id} (${a.kind} "${a.title}")`);
-  return list.length ? `\n\n[Assets selecionados pelo usuário: ${list.join(', ')}]` : '';
+// Referências no texto do usuário: "@{asset_xxxxxxxx}" (inseridas clicando num anexo).
+const REF = /@\{(asset_[0-9a-f]{8})\}/g;
+const KIND_NAME = { image: 'Imagem', video: 'Vídeo', audio: 'Áudio', text: 'Texto', file: 'Arquivo' };
+
+/** Texto para o modelo: referências viram "[Imagem 1 "título" (asset_x)]", numeradas por tipo. */
+function modelText(p, text, attachments) {
+  const order = [...new Set([...[...text.matchAll(REF)].map((m) => m[1]), ...attachments])].filter((id) => p.assets.some((a) => a.id === id));
+  const label = {};
+  const count = {};
+  for (const id of order) {
+    const a = p.assets.find((x) => x.id === id);
+    count[a.kind] = (count[a.kind] || 0) + 1;
+    label[id] = `${KIND_NAME[a.kind] || 'Item'} ${count[a.kind]} "${a.title}" (${a.id})`;
+  }
+  const body = text.replace(REF, (m, id) => (label[id] ? `[${label[id]}]` : m));
+  const extra = attachments.filter((id) => label[id] && !text.includes(`@{${id}}`));
+  const note = extra.length ? `\n\n[Anexos sem posição no texto: ${extra.map((id) => label[id]).join('; ')}]` : '';
+  return body + note;
 }
+
+/** Texto legível (título do projeto): referências viram o título do card. */
+const plainText = (p, text) => text.replace(REF, (m, id) => p.assets.find((a) => a.id === id)?.title || 'anexo');
 
 /** Histórico enxuto: turnos antigos sem raciocínio e com resultados de ferramenta cortados. */
 function contextMessages(p, currentStart) {
@@ -90,15 +107,23 @@ export async function sendMessage(projectId, { text, attachments = [], model }) 
   // Respostas a perguntas abertas marcam a pergunta como respondida.
   for (const m of p.messages) for (const part of m.parts || []) if (part.type === 'question' && !part.answer) part.answer = clean;
 
-  const user = { id: shortId('msg'), role: 'user', text: clean, attachments: attachments.filter((id) => p.assets.some((a) => a.id === id)), createdAt: Date.now() };
+  const referenced = [...clean.matchAll(REF)].map((m) => m[1]);
+  const user = {
+    id: shortId('msg'),
+    role: 'user',
+    text: clean,
+    attachments: [...new Set([...attachments, ...referenced])].filter((id) => p.assets.some((a) => a.id === id)),
+    createdAt: Date.now(),
+  };
   const reply = { id: shortId('msg'), role: 'assistant', parts: [], status: 'running', model: model || getSettings().deepseekModel, createdAt: Date.now() };
   p.messages.push(user, reply);
   if (p.title === 'Novo projeto') {
-    p.title = clean.replace(/\s+/g, ' ').slice(0, 48) + (clean.length > 48 ? '…' : '');
+    const plain = plainText(p, clean).replace(/\s+/g, ' ');
+    p.title = plain.slice(0, 48) + (plain.length > 48 ? '…' : '');
     emit(p.id, { type: 'project', title: p.title });
   }
   const turnStart = p.llm.length;
-  p.llm.push({ role: 'user', content: clean + attachmentNote(p, user.attachments) });
+  p.llm.push({ role: 'user', content: modelText(p, clean, user.attachments) });
   saveProject(p);
   emit(p.id, { type: 'message', message: user });
   emit(p.id, { type: 'message', message: reply });

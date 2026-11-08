@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import { api } from './api.js';
 import Sidebar from './Sidebar.jsx';
@@ -17,6 +17,16 @@ export default function App() {
   const [project, setProject] = useState(null);
   const [running, setRunning] = useState(false);
   const [selected, setSelected] = useState([]);
+  // Anexos da próxima mensagem: cards selecionados entram, desmarcar não tira.
+  const [attachments, setAttachments] = useState([]);
+  const fromChat = useRef(false); // seleção feita ao localizar um card pelo chat não vira anexo
+  useEffect(() => {
+    if (fromChat.current) {
+      fromChat.current = false;
+      return;
+    }
+    if (selected.length) setAttachments((list) => [...new Set([...list, ...selected])]);
+  }, [selected]);
   const [focus, setFocus] = useState(null);
   const [preview, setPreview] = useState(null);
   const [modal, setModal] = useState(['settings', 'workflows'].includes(HASH.get('modal')) ? HASH.get('modal') : null);
@@ -61,6 +71,7 @@ export default function App() {
     if (!currentId) return undefined;
     localStorage.setItem(LAST, currentId);
     setSelected([]);
+    setAttachments([]);
     let alive = true;
     api
       .project(currentId)
@@ -117,7 +128,8 @@ export default function App() {
   async function send(text) {
     try {
       setRunning(true);
-      await api.send(project.id, { text, attachments: selected, model });
+      await api.send(project.id, { text, attachments, model });
+      setAttachments([]);
       setSelected([]);
     } catch (e) {
       setRunning(false);
@@ -128,6 +140,7 @@ export default function App() {
   const openAsset = useCallback((a) => setPreview(a), []);
   const focusAsset = useCallback((id) => {
     setFocus({ id, at: Date.now() });
+    fromChat.current = true;
     setSelected([id]);
   }, []);
 
@@ -162,8 +175,8 @@ export default function App() {
         running={running}
         onSend={send}
         onStop={() => api.stop(project.id)}
-        attachments={selected}
-        setAttachments={setSelected}
+        attachments={attachments}
+        setAttachments={setAttachments}
         models={[...new Set([model, settings?.deepseekModel, ...models].filter(Boolean))]}
         model={model}
         setModel={(m) => {

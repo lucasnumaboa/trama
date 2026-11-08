@@ -8,7 +8,7 @@ import * as comfy from './comfy.js';
 import { describeByName } from './exec.js';
 import { listModels } from './deepseek.js';
 import { publicSettings, updateSettings } from './settings.js';
-import { listCapabilities, setDefaultModel, addModel, removeModel } from './capabilities.js';
+import { listCapabilities, setDefaultModel, addModel, removeModel, modelInCategory } from './capabilities.js';
 import * as projects from './projects.js';
 import { sendMessage, stopAgent, isRunning } from './agent.js';
 
@@ -32,7 +32,9 @@ app.get('/api/deepseek/models', wrap(async (req, res) => res.json({ models: awai
 // ---- Capacidades (modelos padrão por categoria) ----
 app.get('/api/capabilities', wrap(async (req, res) => {
   const names = await comfy.listWorkflows().then((list) => list.map((w) => w.name)).catch(() => null);
-  res.json({ categories: listCapabilities({ workflowNames: names }), workflows: names || [] });
+  // ?project=prj_x devolve os padrões já com as escolhas feitas no chat daquele projeto.
+  const overrides = req.query.project ? projects.getProject(String(req.query.project)).models || {} : {};
+  res.json({ categories: listCapabilities({ workflowNames: names, overrides }), workflows: names || [] });
 }));
 app.put('/api/capabilities/default', wrap((req, res) => {
   res.json(setDefaultModel(String(req.body?.category || ''), String(req.body?.id || '')));
@@ -98,6 +100,12 @@ app.get('/api/projects/:id', wrap((req, res) => {
 app.patch('/api/projects/:id', wrap((req, res) => {
   const p = projects.getProject(req.params.id);
   if (typeof req.body?.title === 'string' && req.body.title.trim()) p.title = req.body.title.trim().slice(0, 80);
+  // Modelo escolhido no chat para uma categoria, só neste projeto.
+  if (req.body?.model && typeof req.body.model === 'object') {
+    const { category, id } = req.body.model;
+    if (!modelInCategory(String(category), String(id))) return res.status(400).json({ error: 'Modelo inválido para essa categoria' });
+    p.models = { ...(p.models || {}), [category]: id };
+  }
   projects.saveProject(p);
   projects.emit(p.id, { type: 'project', title: p.title });
   res.json({ ok: true });

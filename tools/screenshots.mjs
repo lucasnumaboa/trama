@@ -14,7 +14,32 @@ const shots = [
   { name: 'main', hash: `project=${project}`, wait: '.card img' },
   { name: 'settings-models', hash: `project=${project}&modal=settings&section=models`, wait: '#settings-models select' },
   { name: 'workflows', hash: `project=${project}&modal=workflows`, wait: '.wf-item' },
+  // Compositor: três cards viram anexos, dois são citados no texto e o seletor de modelos fica aberto. Nada é enviado.
+  { name: 'composer', hash: `project=${project}`, wait: '.card img', action: composer },
+  { name: 'model-picker', hash: `project=${project}`, wait: '.card img', action: picker },
 ];
+
+async function picker(page) {
+  await page.click('.picker-anchor .bar-btn');
+  await page.waitForSelector('.mp-item');
+  await page.mouse.move(10, 10);
+}
+
+async function composer(page) {
+  const nodes = await page.$$('.react-flow__node:has(.kind-image img)');
+  await page.keyboard.down('Shift');
+  for (const n of nodes.slice(0, 3)) await n.click();
+  await page.keyboard.up('Shift');
+  await page.waitForSelector('.attach-thumb');
+  await page.click('.editor');
+  await page.keyboard.type('Anime ');
+  await (await page.$$('.attach-thumb'))[0].click();
+  await page.keyboard.type('com os fios pulsando, usando a paleta de ');
+  const thumbs = await page.$$('.attach-thumb');
+  await thumbs[Math.min(1, thumbs.length - 1)].click();
+  await page.keyboard.type('num vídeo vertical de 5 segundos');
+  await page.mouse.move(10, 10);
+}
 
 const browser = await puppeteer.launch({ executablePath: chrome, headless: true, defaultViewport: { width: 1600, height: 940, deviceScaleFactor: 1 }, args: ['--mute-audio'] });
 try {
@@ -27,6 +52,7 @@ try {
       await Promise.all([...document.images].map((img) => (img.complete ? null : new Promise((r) => { img.onload = img.onerror = r; }))));
       await Promise.all([...document.querySelectorAll('video')].map((v) => (v.readyState >= 2 ? null : new Promise((r) => { v.onloadeddata = v.onerror = r; setTimeout(r, 4000); }))));
     });
+    if (s.action) await s.action(page);
     await new Promise((r) => setTimeout(r, 1200));
     await page.screenshot({ path: path.join(out, `${s.name}.png`) });
     console.log('saved', s.name);

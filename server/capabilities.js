@@ -99,10 +99,12 @@ function modelsOf(category) {
   return [...builtin, ...extra];
 }
 
-function defaultModel(category) {
+// overrides: escolhas feitas no chat para um projeto ({ categoria: id }).
+function defaultModel(category, overrides = {}) {
   const models = modelsOf(category);
   const chosen = store.defaults[category];
   return (
+    models.find((m) => m.id === overrides[category]) ||
     models.find((m) => m.id === chosen) ||
     models.find((m) => m.workflow === BUILTIN_DEFAULTS[category]) ||
     models[0] ||
@@ -113,13 +115,14 @@ function defaultModel(category) {
 /**
  * @param {{ workflowNames?: string[] }} opts  nomes dos workflows que existem no ComfyUI (null = não conferido)
  */
-export function listCapabilities({ workflowNames = null } = {}) {
+export function listCapabilities({ workflowNames = null, overrides = {} } = {}) {
   load();
   return CATEGORIES.map((category) => {
-    const def = defaultModel(category.id);
+    const def = defaultModel(category.id, overrides);
     return {
       ...category,
       defaultId: def?.id ?? null,
+      globalDefaultId: defaultModel(category.id)?.id ?? null,
       models: modelsOf(category.id).map((m) => ({
         ...m,
         isDefault: m.id === def?.id,
@@ -161,6 +164,12 @@ export function removeModel(id) {
   return { ok: true };
 }
 
+/** Confere se um id de modelo existe na categoria. */
+export function modelInCategory(category, id) {
+  load();
+  return categoryExists(category) && modelsOf(category).some((m) => m.id === id);
+}
+
 /** Nome do workflow padrão de uma categoria (ou null). */
 export function defaultWorkflow(category) {
   load();
@@ -168,8 +177,8 @@ export function defaultWorkflow(category) {
 }
 
 /** Texto que vai para o prompt do agente: padrão de cada categoria e as outras opções. */
-export function capabilityPromptBlock() {
-  return listCapabilities().map((c) => {
+export function capabilityPromptBlock(overrides = {}) {
+  return listCapabilities({ overrides }).map((c) => {
     const def = c.models.find((m) => m.isDefault);
     const others = c.models.filter((m) => !m.isDefault).map((m) => `${m.label} (${m.workflow})`);
     if (!def) return `- ${c.label}: nenhum modelo configurado.`;

@@ -1,47 +1,58 @@
 import { useEffect, useRef, useState } from 'react';
 import { fileUrl } from './api.js';
 import { Icon, RichText, KIND_LABEL } from './ui.jsx';
+import Composer, { Thumb } from './Composer.jsx';
 
 const SUGGESTIONS = [
-  'Crie 3 opções de imagem para a capa de um vídeo sobre café da manhã',
-  'Transforme a foto selecionada num vídeo curto com movimento de câmera',
-  'Monte um vídeo curto: roteiro, cenas e trilha',
+  { icon: 'image', text: 'Crie 3 opções de capa para um vídeo sobre café da manhã' },
+  { icon: 'video', text: 'Anime a imagem selecionada num vídeo curto com movimento de câmera' },
+  { icon: 'audio', text: 'Faça uma música alegre de 20 segundos, cantada em português' },
+  { icon: 'flow', text: 'Monte um vídeo curto: roteiro, cenas, trilha e montagem final' },
 ];
 
-function AssetChip({ asset, onClick, onRemove }) {
+function AssetChip({ asset, onClick }) {
   if (!asset) return null;
-  const thumb = asset.kind === 'image' && asset.file ? fileUrl(asset.file) : null;
   return (
     <span className={`chip chip-${asset.kind}`} onClick={onClick} title={`${KIND_LABEL[asset.kind] || ''}: ${asset.title}`}>
-      {thumb ? <img src={thumb} alt="" /> : <Icon name={asset.kind} size={12} />}
+      <Thumb asset={asset} size={18} />
       <span className="chip-text">{asset.title}</span>
-      {onRemove && (
-        <button
-          className="chip-x"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove();
-          }}
-        >
-          <Icon name="close" size={10} />
-        </button>
-      )}
     </span>
+  );
+}
+
+/** Texto do usuário com as referências "@{asset_x}" mostradas como chips. */
+function UserText({ text, assets, onFocus }) {
+  const parts = String(text).split(/(@\{asset_[0-9a-f]{8}\})/g);
+  return (
+    <div className="bubble">
+      {parts.map((p, i) => {
+        const m = /^@\{(asset_[0-9a-f]{8})\}$/.exec(p);
+        if (!m) return <span key={i}>{p}</span>;
+        const a = assets.find((x) => x.id === m[1]);
+        return a ? (
+          <span key={i} className={`ref-chip ref-${a.kind}`} onClick={() => onFocus(a.id)}>
+            {a.kind === 'image' && a.file && <img src={fileUrl(a.file)} alt="" />}
+            <span>{a.title}</span>
+          </span>
+        ) : (
+          <span key={i} className="ref-chip missing">item removido</span>
+        );
+      })}
+    </div>
   );
 }
 
 function Step({ part, assets, onFocus }) {
   const [open, setOpen] = useState(false);
-  const icon = part.status === 'running' ? <span className="mini-spin" /> : <Icon name={part.status === 'error' ? 'alert' : 'check'} size={13} />;
+  const icon = part.status === 'running' ? <span className="mini-spin" /> : <Icon name={part.status === 'error' ? 'alert' : stepIcon(part)} size={14} />;
   const list = (part.assetIds || []).map((id) => assets.find((a) => a.id === id)).filter(Boolean);
   return (
     <div className={`step step-${part.status}`}>
       <button className="step-head" onClick={() => setOpen((v) => !v)}>
         {icon}
         <span>{part.label}</span>
-        {part.error && <Icon name="chevron" size={12} className={open ? 'rot' : ''} />}
+        {(part.error || list.length > 0) && <Icon name="chevron" size={12} className={`step-chevron ${open ? 'rot' : ''}`} />}
       </button>
-      {open && part.error && <div className="step-error">{part.error}</div>}
       {part.warnings?.length > 0 && (
         <div className="step-warnings">
           {part.warnings.map((w, i) => (
@@ -51,6 +62,7 @@ function Step({ part, assets, onFocus }) {
           ))}
         </div>
       )}
+      {open && part.error && <div className="step-error">{part.error}</div>}
       {list.length > 0 && (
         <div className="chips">
           {list.map((a) => (
@@ -62,18 +74,35 @@ function Step({ part, assets, onFocus }) {
   );
 }
 
+function stepIcon(part) {
+  const t = part.tool || '';
+  if (t === 'run_workflow' || t === 'revise_asset') return 'sparkle';
+  if (t === 'edit_media') return 'scissors';
+  if (t === 'create_text' || t === 'update_text' || t === 'read_text') return 'text';
+  if (t.includes('workflow')) return 'flow';
+  if (t === 'media_info') return 'search';
+  return 'check';
+}
+
 function Message({ m, assets, onFocus, onAnswer, running }) {
   if (m.role === 'user') {
+    const inline = new Set([...String(m.text).matchAll(/@\{(asset_[0-9a-f]{8})\}/g)].map((x) => x[1]));
+    const loose = (m.attachments || []).filter((id) => !inline.has(id));
     return (
       <div className="msg msg-user">
-        {m.attachments?.length > 0 && (
-          <div className="chips">
-            {m.attachments.map((id) => (
-              <AssetChip key={id} asset={assets.find((a) => a.id === id)} onClick={() => onFocus(id)} />
-            ))}
+        {loose.length > 0 && (
+          <div className="user-attachments">
+            {loose.map((id) => {
+              const a = assets.find((x) => x.id === id);
+              return a ? (
+                <button key={id} className="user-thumb" onClick={() => onFocus(id)} title={a.title}>
+                  <Thumb asset={a} size={64} />
+                </button>
+              ) : null;
+            })}
           </div>
         )}
-        <div className="bubble">{m.text}</div>
+        <UserText text={m.text} assets={assets} onFocus={onFocus} />
       </div>
     );
   }
@@ -86,6 +115,9 @@ function Message({ m, assets, onFocus, onAnswer, running }) {
         if (part.type === 'question')
           return (
             <div key={i} className="question">
+              <div className="q-head">
+                <Icon name="chat" size={14} /> Confirmação
+              </div>
               <div className="q-text">{part.question}</div>
               <div className="q-options">
                 {part.options.map((o, j) => (
@@ -95,9 +127,9 @@ function Message({ m, assets, onFocus, onAnswer, running }) {
                     disabled={Boolean(part.answer) || running}
                     onClick={() => onAnswer(o)}
                   >
-                    {part.answer === o && <Icon name="check" size={12} />}
-                    {o}
-                    {j === 0 && !part.answer && <small> recomendado</small>}
+                    {part.answer === o ? <Icon name="check" size={13} /> : <span className="q-dot" />}
+                    <span>{o}</span>
+                    {j === 0 && !part.answer && <small>recomendado</small>}
                   </button>
                 ))}
               </div>
@@ -118,10 +150,10 @@ function Message({ m, assets, onFocus, onAnswer, running }) {
   );
 }
 
-export default function Chat({ project, running, onSend, onStop, attachments, setAttachments, models, model, setModel, onFocus, onRename }) {
-  const [text, setText] = useState('');
+export default function Chat({ project, running, onSend, onStop, attachments, setAttachments, models, model, setModel, onFocus, onRename, onUploaded }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const scroller = useRef(null);
+  const composer = useRef(null);
   const assets = project?.assets || [];
   const messages = project?.messages || [];
 
@@ -129,13 +161,6 @@ export default function Chat({ project, running, onSend, onStop, attachments, se
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, project?.id]);
-
-  function submit(value = text) {
-    const v = value.trim();
-    if (!v || running) return;
-    onSend(v);
-    setText('');
-  }
 
   return (
     <aside className="chat">
@@ -160,67 +185,42 @@ export default function Chat({ project, running, onSend, onStop, attachments, se
       <div className="chat-scroll" ref={scroller}>
         {messages.length === 0 && (
           <div className="chat-welcome">
-            <h3>O que vamos criar?</h3>
-            <p>Conte a ideia. Eu planejo, escolho os workflows do seu ComfyUI, gero e vou montando tudo no canvas.</p>
+            <div className="welcome-mark">
+              <img src="/logo.png" alt="" />
+            </div>
+            <h3>O que vamos criar hoje?</h3>
+            <p>Conte a ideia. Eu planejo, escolho os modelos do seu ComfyUI, gero e vou montando tudo no canvas.</p>
             <div className="suggestions">
               {SUGGESTIONS.map((s) => (
-                <button key={s} onClick={() => submit(s)}>
-                  {s}
+                <button key={s.text} onClick={() => composer.current?.setText(s.text)}>
+                  <Icon name={s.icon} size={15} />
+                  <span>{s.text}</span>
                 </button>
               ))}
             </div>
           </div>
         )}
         {messages.map((m) => (
-          <Message key={m.id} m={m} assets={assets} onFocus={onFocus} onAnswer={(o) => submit(o)} running={running} />
+          <Message key={m.id} m={m} assets={assets} onFocus={onFocus} onAnswer={(o) => onSend(o)} running={running} />
         ))}
       </div>
 
-      <div className="composer">
-        {attachments.length > 0 && (
-          <div className="chips composer-chips">
-            {attachments.map((id) => (
-              <AssetChip
-                key={id}
-                asset={assets.find((a) => a.id === id)}
-                onClick={() => onFocus(id)}
-                onRemove={() => setAttachments((list) => list.filter((x) => x !== id))}
-              />
-            ))}
-          </div>
-        )}
-        <textarea
-          rows={3}
-          placeholder={attachments.length ? 'Diga o que fazer com os itens selecionados…' : 'Descreva o que você quer criar. Selecione cards no canvas para usá-los.'}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          disabled={!project}
+      <div className="composer-wrap">
+        <Composer
+          ref={composer}
+          project={project}
+          running={running}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={onSend}
+          onStop={onStop}
+          models={models}
+          model={model}
+          setModel={setModel}
+          onFocus={onFocus}
+          onUploaded={onUploaded}
         />
-        <div className="composer-bar">
-          <select value={model} onChange={(e) => setModel(e.target.value)} title="Modelo do DeepSeek que orquestra">
-            {models.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-          <span className="grow" />
-          {running ? (
-            <button className="round-btn stop" title="Parar" onClick={onStop}>
-              <Icon name="stop" size={14} />
-            </button>
-          ) : (
-            <button className="round-btn" title="Enviar (Enter)" onClick={() => submit()} disabled={!text.trim() || !project}>
-              <Icon name="send" size={15} />
-            </button>
-          )}
-        </div>
+        <div className="composer-note">O agente usa os workflows do seu ComfyUI · Enter envia, Shift+Enter quebra a linha</div>
       </div>
     </aside>
   );

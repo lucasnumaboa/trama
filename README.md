@@ -34,6 +34,8 @@ Everything runs locally: the agent talks to an LLM (DeepSeek, OpenAI-compatible 
 ## Features
 
 - **Projects → canvas → chat** layout. Each project keeps its own conversation and canvas.
+- **Rich composer**: paste images straight from the clipboard, drag files in, or select cards on the canvas. Click an attached thumbnail to cite it *inside* your sentence ("animate [logo] using the palette of [poster]"), so the agent knows exactly which input is which.
+- **Model picker in the chat**: switch the model of any capability (image, video, audio) for the current project, and optionally make it the default for new projects.
 - **Agent with tools**: discover and read workflows, run them, revise a result with different parameters, edit media, write scripts/lyrics/plans as text cards, ask the user.
 - **Capabilities with default models** (Settings → Default models). Each category has a short list of models, each one bound to a ready-made ComfyUI workflow. You can add your own workflows to any category.
 - **Versions**: changing something ("make it vertical", "make the song 30 s") creates a new version of the same card. Switch versions with ‹ v2/3 › on the card.
@@ -41,6 +43,11 @@ Everything runs locally: the agent talks to an LLM (DeepSeek, OpenAI-compatible 
 - **Automatic checks** after every generation and edit: real duration, resolution, file size, where the sound starts/ends, uniform borders, dominant color. Problems show up as warnings the agent must handle.
 - **Instant local edits with ffmpeg** (no GPU): resize, change aspect ratio (crop, pad with the dominant color or blurred background), compress to a target size, trim, trim silence, crop borders, fps, speed, fade, volume, mute, loop, convert (mp4, webm, gif, mp3, wav, png, jpg), concatenate videos, add or mix audio.
 - **Workflow converter**: reads workflows exactly as you save them in the ComfyUI interface (subgraphs, bypassed/muted nodes, reroutes, primitives, dynamic combos) and converts them to the API format. It is tested against the official ComfyUI frontend conversion.
+
+<p align="center">
+  <img src="docs/screenshots/composer.png" alt="Composer: attachments cited inline in the request" width="49%" />
+  <img src="docs/screenshots/model-picker.png" alt="Model picker: choose the model of each capability from the chat" width="49%" />
+</p>
 
 ## Capabilities and models
 

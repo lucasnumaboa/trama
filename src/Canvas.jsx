@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ReactFlow, Background, MiniMap, Handle, Position, useReactFlow, applyNodeChanges } from '@xyflow/react';
+import { ReactFlow, Background, MiniMap, Handle, Position, useReactFlow, useViewport, applyNodeChanges } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api, fileUrl } from './api.js';
 import { Icon, KIND_LABEL } from './ui.jsx';
@@ -22,6 +22,27 @@ function VersionSwitch({ asset, onVersion }) {
         ›
       </button>
     </span>
+  );
+}
+
+const fmtDuration = (s) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}` : '');
+
+/** Vídeo com selo de duração; os controles aparecem ao passar o mouse. */
+function VideoBody({ url }) {
+  const [duration, setDuration] = useState(null);
+  const [hover, setHover] = useState(false);
+  return (
+    <div className="video-wrap" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+      <video src={`${url}#t=0.1`} controls={hover} muted loop preload="metadata" className="nodrag" onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)} />
+      {!hover && duration && <span className="dur-badge">{fmtDuration(duration)}</span>}
+      {!hover && (
+        <span className="play-badge">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+            <path d="M8 5v14l11-7z" />
+          </svg>
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -68,7 +89,7 @@ const AssetCard = memo(function AssetCard({ data, selected }) {
     );
   } else if (asset.kind === 'image') body = <img src={url} alt={asset.title} draggable={false} />;
   // "#t=0.1" faz o navegador desenhar um quadro de verdade como miniatura.
-  else if (asset.kind === 'video') body = <video src={`${url}#t=0.1`} controls muted loop preload="metadata" className="nodrag" />;
+  else if (asset.kind === 'video') body = <VideoBody url={url} />;
   else if (asset.kind === 'audio')
     body = (
       <div className="card-audio">
@@ -80,14 +101,14 @@ const AssetCard = memo(function AssetCard({ data, selected }) {
   else body = <div className="card-file">{asset.file?.filename}</div>;
 
   return (
-    <div className={`card card-${asset.kind} ${selected ? 'is-selected' : ''}`} onDoubleClick={() => onOpen(asset)}>
+    <div className={`card kind-${asset.kind} ${selected ? 'is-selected' : ''}`} onDoubleClick={() => onOpen(asset)}>
       <Handle type="target" position={Position.Left} isConnectable={false} className="card-handle" />
-      <div className="card-title" title={asset.title}>
-        <Icon name={asset.kind} size={13} />
+      <div className="card-label" title={asset.title}>
+        <Icon name={asset.kind} size={12} />
         <span>{asset.title}</span>
         <VersionSwitch asset={asset} onVersion={onVersion} />
       </div>
-      <div className="card-body">{body}</div>
+      <div className={`card-body ${asset.status !== 'ready' ? 'is-busy' : ''}`}>{body}</div>
       <Handle type="source" position={Position.Right} isConnectable={false} className="card-handle" />
     </div>
   );
@@ -96,7 +117,8 @@ const AssetCard = memo(function AssetCard({ data, selected }) {
 const nodeTypes = { asset: AssetCard };
 
 export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId }) {
-  const { screenToFlowPosition, fitView, setCenter, getNode } = useReactFlow();
+  const { screenToFlowPosition, fitView, setCenter, getNode, zoomIn, zoomOut } = useReactFlow();
+  const { zoom } = useViewport();
   const [nodes, setNodes] = useState([]);
   const [showMap, setShowMap] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -224,8 +246,8 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
         panOnScroll
         zoomActivationKeyCode="Control"
       >
-        <Background gap={22} size={1.2} color="#2a2d33" />
-        {showMap && <MiniMap pannable zoomable nodeColor="#3a3f48" maskColor="rgba(0,0,0,0.5)" />}
+        <Background gap={24} size={1.3} color="#26282e" />
+        {showMap && <MiniMap pannable zoomable position="bottom-right" nodeColor="#3a3f48" nodeBorderRadius={6} maskColor="rgba(10,10,12,0.6)" />}
       </ReactFlow>
 
       {project && project.assets.length === 0 && (
@@ -237,20 +259,37 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
         </div>
       )}
 
+      <div className="canvas-tools">
+        <button className="tool-btn" title="Afastar" onClick={() => zoomOut({ duration: 200 })}>
+          <Icon name="zoomOut" size={15} />
+        </button>
+        <button className="zoom-pct" title="Ver tudo" onClick={() => fitView({ padding: 0.2, duration: 300 })}>
+          {Math.round(zoom * 100)}%
+        </button>
+        <button className="tool-btn" title="Aproximar" onClick={() => zoomIn({ duration: 200 })}>
+          <Icon name="zoomIn" size={15} />
+        </button>
+        <span className="tool-sep" />
+        <button className="tool-btn" title="Ver tudo" onClick={() => fitView({ padding: 0.2, duration: 300 })}>
+          <Icon name="fit" size={15} />
+        </button>
+        <button className={`tool-btn ${showMap ? 'on' : ''}`} title="Minimapa" onClick={() => setShowMap((v) => !v)}>
+          <Icon name="map" size={15} />
+        </button>
+      </div>
+
       <div className="dock">
-        <button className="dock-btn" title="Enviar arquivos para o projeto" onClick={() => fileInput.current?.click()} disabled={!project}>
-          <Icon name="upload" />
-        </button>
-        <button className="dock-btn" title="Ver tudo" onClick={() => fitView({ padding: 0.2, duration: 300 })}>
-          <Icon name="fit" />
-        </button>
-        <button className={`dock-btn ${showMap ? 'on' : ''}`} title="Minimapa" onClick={() => setShowMap((v) => !v)}>
-          <Icon name="map" />
+        <button className="dock-add" title="Enviar imagens, vídeos ou áudios para o projeto" onClick={() => fileInput.current?.click()} disabled={!project}>
+          <Icon name="plus" size={18} />
         </button>
         <span className="dock-sep" />
-        <button className="dock-btn" title="Remover selecionados" onClick={deleteSelected} disabled={!selectedIds.length}>
-          <Icon name="trash" />
+        <button className="dock-btn on" title="Selecionar (arraste para marcar vários)">
+          <Icon name="pointer" size={16} />
         </button>
+        <button className="dock-btn" title="Remover selecionados" onClick={deleteSelected} disabled={!selectedIds.length}>
+          <Icon name="trash" size={16} />
+        </button>
+        {selectedIds.length > 0 && <span className="dock-count">{selectedIds.length} selecionado(s)</span>}
         <input
           ref={fileInput}
           type="file"
@@ -263,7 +302,7 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
           }}
         />
       </div>
-      <div className="canvas-hint">Arraste com o botão esquerdo para selecionar · role para mover · Ctrl + rolar para zoom · duplo clique abre</div>
+      <div className="canvas-hint">Arraste para selecionar · role para mover · Ctrl + rolar para zoom · duplo clique abre</div>
     </div>
   );
 }
