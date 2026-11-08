@@ -40,6 +40,7 @@ Source: "..\package.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\package-lock.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\start-trama.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 ; Data folder (settings and projects) is created empty: the user's API key is never packaged.
 
 [Dirs]

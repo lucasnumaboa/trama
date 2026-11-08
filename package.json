@@ -2,6 +2,7 @@
   "name": "trama",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Multi-orchestrator for ComfyUI: chat with an AI agent that plans, runs your ComfyUI workflows and builds the creative flow on a canvas",
   "scripts": {

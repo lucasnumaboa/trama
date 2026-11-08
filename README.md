@@ -140,3 +140,7 @@ node tools/test_workflows.mjs              # also runs the fast ones for real
 | `tools/` | Workflow builder, workflow tests, screenshot script |
 
 Generated files stay in ComfyUI's own `output` and `input` folders; Trama only stores references to them. Settings (including the API key) are stored in `data/settings.json`, which is never committed or packaged.
+
+## License
+
+[MIT](LICENSE). The workflows are built from the official ComfyUI templates; each model keeps its own license (check them before commercial use).
