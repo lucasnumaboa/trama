@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/settings-models.png" alt="Trama: projects, canvas, agent chat and the default model of each capability" width="100%" />
+  <img src="docs/screenshots/main.png" alt="Trama: projects, canvas and agent chat" width="100%" />
 </p>
 
 ---
@@ -56,6 +56,11 @@ Built-in list (all workflows are created from the official ComfyUI templates and
 | Edit video | RealESRGAN 4x video upscale · MiniMax H3 character swap · ffmpeg edits |
 | Create music | ACE-Step 1.5 XL Turbo (vocals + lyrics) · ACE-Step 1.5 Turbo AIO · Stable Audio 3 (instrumental / SFX) |
 | Voice editing | Seed-VC (convert a speech/singing audio to a reference voice) |
+
+<p align="center">
+  <img src="docs/screenshots/settings-models.png" alt="Settings: default model per capability" width="49%" />
+  <img src="docs/screenshots/workflows.png" alt="ComfyUI workflows available to the agent" width="49%" />
+</p>
 
 To add a model: build and save the workflow in ComfyUI, then **Settings → Add model** (category + workflow + name). To help the agent use it well, use `Load Image/Video/Audio` nodes for inputs, `Save Image/Video/Audio` for outputs, give those nodes clear titles and write a **Markdown Note** explaining what the workflow does and what kind of prompt works — the agent reads it.
 

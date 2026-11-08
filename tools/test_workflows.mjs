@@ -52,8 +52,13 @@ async function run(name) {
 }
 
 const names = new Set((await comfy.listWorkflows()).map((w) => w.name));
+// Filtros opcionais: --only <regex> roda só esses; --skip <regex> pula esses.
+const argOf = (flag) => (process.argv.includes(flag) ? new RegExp(process.argv[process.argv.indexOf(flag) + 1]) : null);
+const only = argOf('--only');
+const skip = argOf('--skip');
 for (const cat of listCapabilities()) {
   for (const m of cat.models) {
+    if ((only && !only.test(m.workflow)) || (skip && skip.test(m.workflow))) continue;
     const label = `${cat.label} | ${m.label}`.padEnd(78);
     if (!names.has(m.workflow)) { console.log('FALTA', label, `(${m.workflow} não está no ComfyUI)`); continue; }
     const mode = onlyValidate || HEAVY.test(m.workflow) ? 'validar' : 'rodar';
