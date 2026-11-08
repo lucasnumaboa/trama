@@ -65,7 +65,21 @@ O projeto tem ${p.assets.length} cards agora.`;
 }
 
 // Referências no texto do usuário: "@{asset_xxxxxxxx}" (inseridas clicando num anexo).
-const REF = /@\{(asset_[0-9a-f]{8})\}/g;
+// Rótulo legível para um passo que falhou antes de ganhar rótulo próprio.
+function failLabel(tool, args = {}) {
+  const wf = String(args.name || args.workflow || '').replace(/\.json$/, '').replace(/_/g, ' ');
+  const names = {
+    run_workflow: wf ? `Não consegui rodar ${wf}` : 'Não consegui rodar o workflow',
+    revise_asset: 'Não consegui refazer o item',
+    edit_media: args.operation ? `Não consegui aplicar ${args.operation}` : 'Não consegui editar a mídia',
+    get_workflow: wf ? `Não consegui ler ${wf}` : 'Não consegui ler o workflow',
+    media_info: 'Não consegui medir a mídia',
+    select_version: 'Não consegui trocar a versão',
+  };
+  return names[tool] || `Falhou: ${tool.replace(/_/g, ' ')}`;
+}
+
+const REF =/@\{(asset_[0-9a-f]{8})\}/g;
 const KIND_NAME = { image: 'Imagem', video: 'Vídeo', audio: 'Áudio', text: 'Texto', file: 'Arquivo' };
 
 /** Texto para o modelo: referências viram "[Imagem 1 "título" (asset_x)]", numeradas por tipo. */
@@ -184,7 +198,7 @@ export async function sendMessage(projectId, { text, attachments = [], model }) 
             }
             content = JSON.stringify(out.result);
           } catch (error) {
-            Object.assign(part, { status: 'error', error: error.message, label: part.label === '…' ? call.function.name : part.label });
+            Object.assign(part, { status: 'error', error: error.message, label: part.label === '…' ? failLabel(call.function.name, args) : part.label });
             content = JSON.stringify({ error: error.message });
           }
           p.llm.push({ role: 'tool', tool_call_id: call.id, content });

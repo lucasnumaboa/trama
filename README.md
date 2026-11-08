@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/main.png" alt="Trama: projects, canvas and agent chat" width="100%" />
+  <img src="docs/screenshots/demo.gif" alt="Demo: paste an image, pick the edit model, cite the image in the request and watch the agent build the flow" width="100%" />
 </p>
 
 ---
@@ -43,6 +43,10 @@ Everything runs locally: the agent talks to an LLM (DeepSeek, OpenAI-compatible 
 - **Automatic checks** after every generation and edit: real duration, resolution, file size, where the sound starts/ends, uniform borders, dominant color. Problems show up as warnings the agent must handle.
 - **Instant local edits with ffmpeg** (no GPU): resize, change aspect ratio (crop, pad with the dominant color or blurred background), compress to a target size, trim, trim silence, crop borders, fps, speed, fade, volume, mute, loop, convert (mp4, webm, gif, mp3, wav, png, jpg), concatenate videos, add or mix audio.
 - **Workflow converter**: reads workflows exactly as you save them in the ComfyUI interface (subgraphs, bypassed/muted nodes, reroutes, primitives, dynamic combos) and converts them to the API format. It is tested against the official ComfyUI frontend conversion.
+
+<p align="center">
+  <img src="docs/screenshots/main.png" alt="Trama: projects, canvas and agent chat" width="100%" />
+</p>
 
 <p align="center">
   <img src="docs/screenshots/composer.png" alt="Composer: attachments cited inline in the request" width="49%" />
