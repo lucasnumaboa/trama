@@ -1,0 +1,25 @@
+{
+  "name": "trama",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Multi-orchestrator for ComfyUI: chat with an AI agent that plans, runs your ComfyUI workflows and builds the creative flow on a canvas",
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,green \"node --watch server/index.js\" \"vite\"",
+    "build": "vite build",
+    "start": "vite build && node server/index.js",
+    "test": "node --test \"server/**/*.test.js\""
+  },
+  "dependencies": {
+    "@xyflow/react": "12.8.6",
+    "express": "4.21.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "4.3.4",
+    "concurrently": "9.1.2",
+    "puppeteer-core": "^23.11.1",
+    "vite": "6.0.7"
+  }
+}

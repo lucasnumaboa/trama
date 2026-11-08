@@ -1,0 +1,29 @@
+diff --git a/seed_vc/modules/bigvgan/bigvgan.py b/seed_vc/modules/bigvgan/bigvgan.py
+index 41d6e44..d129323 100644
+--- a/seed_vc/modules/bigvgan/bigvgan.py
++++ b/seed_vc/modules/bigvgan/bigvgan.py
+@@ -418,8 +418,8 @@ class BigVGAN(
+             revision: str,
+             cache_dir: str,
+             force_download: bool,
+-            proxies: Optional[Dict],
+-            resume_download: bool,
++            proxies: Optional[Dict] = None,
++            resume_download: bool = False,
+             local_files_only: bool,
+             token: Union[str, bool, None],
+             map_location: str = "cpu",  # Additional argument
+diff --git a/seedvcnode.py b/seedvcnode.py
+index 143fb1d..2805ead 100644
+--- a/seedvcnode.py
++++ b/seedvcnode.py
+@@ -442,7 +442,8 @@ def cache_audio_tensor(
+         ) as tmp_file:
+             temp_filepath = tmp_file.name
+         
+-        torchaudio.save(temp_filepath, audio_tensor, sample_rate)
++        import soundfile as sf
++        sf.write(temp_filepath, audio_tensor.detach().cpu().numpy().T, sample_rate)
+ 
+         return temp_filepath
+     except Exception as e:

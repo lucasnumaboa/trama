@@ -1,0 +1,196 @@
+// O agente: conversa com o DeepSeek, que decide quais ferramentas usar.
+// Cada passo aparece no chat e cada resultado vira um card no canvas.
+import { chatWithTools } from './deepseek.js';
+import { TOOL_SCHEMAS, runTool, workflowCatalog } from './tools.js';
+import { getProject, saveProject, emit, shortId, describeAsset } from './projects.js';
+import { capabilityPromptBlock } from './capabilities.js';
+import * as comfy from './comfy.js';
+import { getSettings } from './settings.js';
+
+const running = new Map(); // projectId -> AbortController
+const MAX_STEPS = 40;
+
+export const isRunning = (projectId) => running.has(projectId);
+export function stopAgent(projectId) {
+  running.get(projectId)?.abort();
+  return running.has(projectId);
+}
+
+async function systemPrompt(p) {
+  const stats = await comfy.systemStats().catch(() => null);
+  const gpu = stats?.devices?.map((d) => `${d.name.replace(/^cuda:\d+\s*/, '').replace(/ : .*$/, '')} (${Math.round(d.vram_total / 1e9)} GB)`).join(', ');
+  const catalog = await workflowCatalog().catch(() => '');
+  return `Você é o Trama, um parceiro de criação audiovisual. Você e o usuário trabalham num projeto que tem um canvas: tudo o que você gera ou escreve vira um card (asset) com um id, ligado aos cards que serviram de entrada. O canvas mostra ao usuário o fluxo do trabalho.
+
+Como você gera mídia: rodando os workflows salvos no ComfyUI local do usuário${gpu ? ` (GPU: ${gpu})` : ''}. Cada workflow é uma capacidade (texto para imagem, edição de imagem, imagem para vídeo, troca de personagem, áudio etc.). Você não tem outras formas de gerar mídia além desses workflows e da edição com ffmpeg.
+
+Como trabalhar:
+1. Entenda o que o usuário quer: o público, o uso e o resultado final. Se faltar uma decisão importante (formato vertical ou horizontal, duração, estilo), pergunte com ask_user e dê opções, com a sua recomendação primeiro. Se der para decidir com bom senso, decida e diga o que decidiu.
+2. Descubra as capacidades com list_workflows e leia com get_workflow os que vai usar. Use só workflows que existem e só os ids de campo e slot que get_workflow mostrou.
+3. Planeje a partir do resultado final. Para trabalhos com várias partes, registre o plano ou roteiro com create_text antes de gerar.
+4. Gere passo a passo. Mostre cada resultado e, em trabalhos longos, peça confirmação antes de gastar tempo com o próximo passo caro (vídeo leva minutos).
+5. Encadeie: use as saídas como entradas dos próximos passos (inputs com os ids dos assets). Para juntar vídeos ou colocar áudio, use edit_media.
+
+Editar o que já existe (o usuário vai pedir muito isso: "diminui o vídeo", "deixa a música com 30 s", "passa para vertical", "mais lento", "tira o som"):
+- Não crie card novo para mudar um card existente: o resultado é uma nova versão do mesmo card (o usuário pode voltar para as anteriores).
+- Mudanças técnicas em mídia pronta (resolução, proporção 9:16/1:1/16:9, cortar trecho, comprimir o arquivo, fps, velocidade, volume, fade, tirar o som, repetir, converter formato): use edit_media. É instantâneo e não usa a GPU. Use media_info antes quando precisar dos números atuais.
+- Mudanças no conteúdo gerado (outro prompt, outra duração gerada, outro estilo, outra letra, outra seed, outra imagem de entrada): use revise_asset com só os campos que mudam. A receita do card (list_assets mostra) diz o workflow e os valores usados.
+- "Diminuir" é ambíguo (resolução, tamanho do arquivo ou duração). Se o contexto não deixar claro, pergunte com ask_user.
+- Se o usuário selecionou cards, a mudança é neles. Senão, use o card mais recente do tipo citado.
+- Para voltar atrás, use select_version.
+
+Conferência (obrigatória):
+- Toda geração e edição volta com "checks" (medidas reais do arquivo) e "warnings". Antes de dizer ao usuário que ficou pronto, leia os avisos. Corrija o que der (trim_silence para silêncio sobrando, crop_borders para bordas, revise_asset quando o conteúdo não bate com o pedido) ou diga claramente o que ficou diferente do pedido. Nunca afirme algo que os checks contradizem (ex.: dizer "10 s de música" quando o som acaba em 6 s).
+- Se uma edição voltar "unchanged", não houve mudança: explique o motivo em vez de dizer que fez.
+- Para animar logo, ícone ou arte sem deformar, use o workflow de primeiro e último quadro com a mesma imagem nos dois (vira loop). O imagem→vídeo comum reinterpreta o desenho.
+- Você não vê as imagens nem ouve os áudios: não descreva detalhes visuais ou sonoros que não pediu ao modelo nem mediu. Se o usuário quiser saber como ficou, mostre o card e peça que ele avalie.
+- Não invente a causa de um problema. Diga o que fez e o que mediu; se não sabe o porquê, diga que não sabe.
+- Quando o usuário diz que uma versão ficou ruim, refaça a partir de uma versão boa (from_version), não por cima da ruim.
+
+Regras:
+- Escreva os prompts dos workflows em inglês, detalhados e visuais, a menos que as notas do workflow digam outra coisa. Fale com o usuário em português do Brasil (ou no idioma dele).
+- Não mude parâmetros técnicos sem motivo: os padrões dos workflows já estão ajustados para esta máquina. Mude só o que o pedido exige (prompt, tamanho, duração, imagem de entrada).
+- Cite os assets pelo título. Nunca invente resultados: se uma ferramenta falhar, explique o erro em poucas palavras e proponha outro caminho.
+- Respostas curtas e diretas. Não repita listas de parâmetros para o usuário.
+
+Modelos padrão por categoria (definidos pelo usuário nas Configurações). Quando o pedido couber numa categoria, use o modelo padrão dela. Se o padrão não aceita as entradas do pedido (ex.: o padrão é texto → vídeo e o usuário quer animar uma imagem), use a opção da mesma categoria que aceita essas entradas, preferindo a mesma família de modelo. Use outro modelo pelo nome quando o usuário pedir. Para trocar a voz de um áudio, use a categoria Edição de voz.
+${capabilityPromptBlock()}
+
+Catálogo atual de workflows (entradas → saídas). Escolha o que combina com o pedido: para animar uma imagem, use um de imagem → vídeo; não use um workflow de outra finalidade adaptando as entradas. Leia com get_workflow antes de rodar.
+${catalog || '(não consegui ler o catálogo agora; use list_workflows)'}
+
+O projeto tem ${p.assets.length} cards agora.`;
+}
+
+function attachmentNote(p, ids) {
+  const list = ids
+    .map((id) => p.assets.find((a) => a.id === id))
+    .filter(Boolean)
+    .map((a) => `${a.id} (${a.kind} "${a.title}")`);
+  return list.length ? `\n\n[Assets selecionados pelo usuário: ${list.join(', ')}]` : '';
+}
+
+/** Histórico enxuto: turnos antigos sem raciocínio e com resultados de ferramenta cortados. */
+function contextMessages(p, currentStart) {
+  return p.llm.map((m, i) => {
+    if (i >= currentStart) return m;
+    const { reasoning_content, ...rest } = m;
+    void reasoning_content;
+    if (rest.role === 'tool' && rest.content.length > 1200) return { ...rest, content: `${rest.content.slice(0, 1200)}…(cortado)` };
+    return rest;
+  });
+}
+
+export async function sendMessage(projectId, { text, attachments = [], model }) {
+  const p = getProject(projectId);
+  if (running.has(p.id)) throw Object.assign(new Error('O agente ainda está trabalhando neste projeto'), { status: 409 });
+  const clean = String(text || '').trim();
+  if (!clean) throw Object.assign(new Error('Mensagem vazia'), { status: 400 });
+
+  // Respostas a perguntas abertas marcam a pergunta como respondida.
+  for (const m of p.messages) for (const part of m.parts || []) if (part.type === 'question' && !part.answer) part.answer = clean;
+
+  const user = { id: shortId('msg'), role: 'user', text: clean, attachments: attachments.filter((id) => p.assets.some((a) => a.id === id)), createdAt: Date.now() };
+  const reply = { id: shortId('msg'), role: 'assistant', parts: [], status: 'running', model: model || getSettings().deepseekModel, createdAt: Date.now() };
+  p.messages.push(user, reply);
+  if (p.title === 'Novo projeto') {
+    p.title = clean.replace(/\s+/g, ' ').slice(0, 48) + (clean.length > 48 ? '…' : '');
+    emit(p.id, { type: 'project', title: p.title });
+  }
+  const turnStart = p.llm.length;
+  p.llm.push({ role: 'user', content: clean + attachmentNote(p, user.attachments) });
+  saveProject(p);
+  emit(p.id, { type: 'message', message: user });
+  emit(p.id, { type: 'message', message: reply });
+
+  const controller = new AbortController();
+  running.set(p.id, controller);
+  emit(p.id, { type: 'running', running: true });
+  const push = () => emit(p.id, { type: 'message', message: reply });
+
+  (async () => {
+    try {
+      for (let step = 0; step < MAX_STEPS; step++) {
+        reply.thinking = true;
+        push();
+        const { message } = await chatWithTools({
+          model: reply.model,
+          messages: [{ role: 'system', content: await systemPrompt(p) }, ...contextMessages(p, turnStart)],
+          tools: TOOL_SCHEMAS,
+          signal: controller.signal,
+        });
+        reply.thinking = false;
+        p.llm.push(message);
+        if (message.content?.trim()) reply.parts.push({ type: 'text', text: message.content.trim() });
+        push();
+
+        const calls = message.tool_calls || [];
+        if (!calls.length) break;
+
+        let endTurn = false;
+        for (const call of calls) {
+          let args = {};
+          try {
+            args = JSON.parse(call.function.arguments || '{}');
+          } catch {
+            args = {};
+          }
+          const part = { type: 'step', id: call.id, tool: call.function.name, label: '…', status: 'running', assetIds: [] };
+          if (call.function.name !== 'ask_user') {
+            reply.parts.push(part);
+            push();
+          }
+          let content;
+          try {
+            if (controller.signal.aborted) throw new Error('Cancelado pelo usuário');
+            const out = await runTool(call.function.name, args, {
+              project: p,
+              signal: controller.signal,
+              step: (patch) => {
+                Object.assign(part, patch);
+                push();
+              },
+            });
+            if (out.question) {
+              reply.parts.push({ type: 'question', ...out.question });
+              endTurn = true;
+            } else {
+              Object.assign(part, { label: out.label, status: 'done', assetIds: out.assetIds || part.assetIds, warnings: out.warnings?.length ? out.warnings : undefined });
+            }
+            content = JSON.stringify(out.result);
+          } catch (error) {
+            Object.assign(part, { status: 'error', error: error.message, label: part.label === '…' ? call.function.name : part.label });
+            content = JSON.stringify({ error: error.message });
+          }
+          p.llm.push({ role: 'tool', tool_call_id: call.id, content });
+          saveProject(p);
+          push();
+        }
+        if (endTurn || controller.signal.aborted) break;
+        if (step === MAX_STEPS - 1) reply.parts.push({ type: 'text', text: 'Parei aqui para não passar do limite de passos. Diga se devo continuar.' });
+      }
+      reply.status = controller.signal.aborted ? 'stopped' : 'done';
+    } catch (error) {
+      reply.status = controller.signal.aborted ? 'stopped' : 'error';
+      if (!controller.signal.aborted) reply.parts.push({ type: 'error', text: error.message });
+    } finally {
+      // Mantém o histórico do modelo consistente: chamadas sem resposta recebem um erro.
+      const pendingIds = new Set();
+      for (const m of p.llm.slice(turnStart)) {
+        if (m.role === 'assistant') (m.tool_calls || []).forEach((c) => pendingIds.add(c.id));
+        if (m.role === 'tool') pendingIds.delete(m.tool_call_id);
+      }
+      for (const id of pendingIds) p.llm.push({ role: 'tool', tool_call_id: id, content: JSON.stringify({ error: 'interrompido' }) });
+      for (const part of reply.parts) if (part.type === 'step' && part.status === 'running') part.status = 'error';
+      reply.thinking = false;
+      running.delete(p.id);
+      saveProject(p);
+      push();
+      emit(p.id, { type: 'running', running: false });
+    }
+  })();
+
+  return { user, reply };
+}
+
+export { describeAsset };

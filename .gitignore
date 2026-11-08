@@ -1,0 +1,7 @@
+node_modules/
+dist/
+data/*
+!data/.keep
+installer/output/
+.progress/
+*.log

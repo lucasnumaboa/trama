@@ -1,0 +1,22 @@
+{
+  "trama_ampliar_imagem.json": "abe5bc7cfcf91c1fd7f1b15e09af3f52d505af017809aa645195db8f862fd4ad",
+  "trama_ampliar_video.json": "5242e58e42e12275bb629988a91620275c85af2c974150c4bf5accd130bd9365",
+  "trama_editar_imagem_flux2_klein.json": "80a0b4affe0de63e6a760bbaafa5523e4e37f85acabb1634caa2591a33aba9aa",
+  "trama_editar_imagem_qwen_2511.json": "1edea50ffe4a0b068434724e74794938427d72b76a73793bf86481d58bac3426",
+  "trama_h3_primeiro_ultimo_quadro.json": "c5cdc62abd100eeee3dd587d7e3408c0eed0651246b820eaf4c154040604f031",
+  "trama_imagem_ernie_turbo.json": "98ee72001017517931881d2ad5d602c296ddee52efffd152aaaae20fa5d440b3",
+  "trama_imagem_flux2_klein.json": "484e327f61eb98dde9e57761498e73b89b226b19024360389ad97a9cfb569e77",
+  "trama_imagem_newbie.json": "06774c7365f7602f74aa84b05fd2c2c2a7ae3cf28ec8beaac81789170c38e64a",
+  "trama_imagem_qwen_image.json": "2020f76f003f0dbbeae71ac0a0366d451f401964d32cc64ef6dcc31b33e7751e",
+  "trama_imagem_z_image_turbo.json": "cc79ee8d52eb6a83e43e40e889b9f51c9045e315228d827f71255a893914dc69",
+  "trama_musica_ace_step_aio.json": "6850cde2009ab86714c797fad82775a66b6013bdaf081ec57b51f3d1a2636bac",
+  "trama_musica_com_voz_ace_step.json": "faadc82bd8f18abcead18619018154d08d2b61f99320159204d638e943f3a3b9",
+  "trama_remover_fundo.json": "187369b2767b3a6e8600f6f3f11de8cd3ddcf5610c588e0a1c8fadf0344b14b6",
+  "trama_trocar_voz.json": "829166fe559d1668a02498c057b159871d6169fa2b807570447130172f347c6c",
+  "trama_video_h3_referencia.json": "cbc955ef94b883d660dc538efb416e159fd99619b6d408fca5280ffffd4afcc4",
+  "trama_video_h3_texto.json": "59199d9a8b98bee0c7da9910ce2af7649eb7a5614a6753f271de826414b5f2de",
+  "trama_video_ltx23_imagem.json": "5cd969e193e8707bc820b5aab79d3462bf3f35ab2bdd7c5bc1e6fcf13788c27c",
+  "trama_video_ltx23_texto.json": "66a17c912baf711b87017eb1bd55e93046e32ba17c6d8059a3312d894df6ad4e",
+  "trama_video_wan22_imagem.json": "9733e7a0efde7aabe1b97234fcf298d893124810a5e7706625ffbfc7cbcc31dc",
+  "trama_video_wan22_quadros.json": "498b25080b95e8b0c76597c9cfe551dea92883ec9ddcf4e5c5b65f92b3bae3b1"
+}
