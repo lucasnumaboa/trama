@@ -49,6 +49,10 @@ export function describeWorkflow(name, workflow, objectInfo) {
     for (const v of Object.values(prompt[id].inputs)) if (Array.isArray(v)) visit(String(v[0]));
   };
   for (const [id, n] of Object.entries(prompt)) if (objectInfo[n.class_type]?.output_node) visit(id);
+  // Nó de saída cujo resultado alimenta outro nó (ex.: PreviewAny que repassa o
+  // prompt reescrito) é passagem interna, não um resultado do workflow.
+  const consumed = new Set();
+  for (const n of Object.values(prompt)) for (const v of Object.values(n.inputs)) if (Array.isArray(v)) consumed.add(String(v[0]));
 
   for (const id of Object.keys(prompt).sort(sortIds)) {
     if (!used.has(id)) continue;
@@ -56,7 +60,7 @@ export function describeWorkflow(name, workflow, objectInfo) {
     const def = objectInfo[type];
     const title = nodes[id].title;
 
-    if (def.output_node) {
+    if (def.output_node && !consumed.has(id)) {
       outputs.push({ id: `out:${id}`, nodeId: id, title, kind: outputKind(type, def) });
     }
 
@@ -107,6 +111,14 @@ export function describeWorkflow(name, workflow, objectInfo) {
     const linked = prim.targets.map(([nodeId, input]) => fields.find((f) => f.nodeId === nodeId && f.input === input)).filter(Boolean);
     if (!linked.length) continue;
     const first = linked[0];
+    if (prim.keepId) {
+      // Entrada de subgrafo que alimenta vários nós: cada campo mantém o seu id e
+      // passa a mudar todos os destinos (senão um nó recebe o valor novo e o outro fica com o padrão).
+      // Fica um campo só (o primeiro); os outros seriam cópias que sobrescrevem o valor.
+      first.targets = prim.targets.filter(([nodeId]) => prompt[nodeId]);
+      for (const f of linked.slice(1)) fields.splice(fields.indexOf(f), 1);
+      continue;
+    }
     const merged = {
       ...first,
       id: `${key}.value`,

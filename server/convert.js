@@ -170,6 +170,8 @@ export function convertWorkflow(workflow, objectInfo) {
     if (originId === SUBGRAPH_INPUT) {
       const sgInput = scope.def.inputs?.[originSlot];
       const inst = scope.instance;
+      // Entrada do subgrafo que alimenta vários nós internos: todos recebem o mesmo valor.
+      const group = sgInput ? `${keyOf(scope.parent, inst.id)}>${sgInput.name}` : undefined;
       // Casa a entrada pelo nome (nunca pela posição: o nó mostra só parte delas).
       const instInput = sgInput ? inst.inputs?.find((i) => i.name === sgInput.name) : undefined;
       if (instInput?.link != null) {
@@ -182,10 +184,10 @@ export function convertWorkflow(workflow, objectInfo) {
       if (sgInput && !inst.properties?.proxyWidgets && Array.isArray(wv) && wv.length) {
         const fields = (scope.def.inputs || []).filter((i) => isWidgetType(i.type));
         const idx = fields.indexOf(sgInput);
-        if (idx >= 0 && idx < wv.length) return { value: wv[idx] };
+        if (idx >= 0 && idx < wv.length) return { value: wv[idx], group };
       }
       // Senão vale o campo do próprio nó interno (ou de um irmão que recebe a mesma entrada).
-      return { inherit: true, scope, sgInput };
+      return { inherit: true, scope, sgInput, group };
     }
 
     const node = scope.nodes.get(originId);
@@ -223,6 +225,7 @@ export function convertWorkflow(workflow, objectInfo) {
   const prompt = {};
   const meta = {};
   const primitives = {};
+  const groups = {}; // entrada de subgrafo -> [[nó, entrada], ...]
 
   // Valor de campo de outro nó interno ligado à mesma entrada do subgrafo.
   function siblingValue(scope, sgInput, exceptNodeId) {
@@ -256,6 +259,7 @@ export function convertWorkflow(workflow, objectInfo) {
         const link = scope.links.get(input.link);
         if (!link) continue;
         const origin = resolveOrigin(scope, link.origin_id, link.origin_slot);
+        if (origin?.group) (groups[origin.group] ||= []).push([keyOf(scope, node.id), input.name]);
         if (origin?.inherit) {
           if (inputs[input.name] === undefined) {
             const v = siblingValue(origin.scope, origin.sgInput, node.id);
@@ -283,5 +287,9 @@ export function convertWorkflow(workflow, objectInfo) {
 
   emitScope(makeScope(workflow.nodes, workflow.links || [], '', null, null, null));
   if (!Object.keys(prompt).length) throw new ConvertError('O workflow não tem nós executáveis');
+  // Só vira grupo quando a mesma entrada chega a mais de um nó; mantém o id do campo.
+  for (const [key, targets] of Object.entries(groups)) {
+    if (targets.length > 1) primitives[key] = { targets, keepId: true };
+  }
   return { prompt, nodes: meta, primitives };
 }

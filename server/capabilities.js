@@ -28,6 +28,8 @@ const BUILTIN = [
   ['image_create', 'trama_imagem_ernie_turbo.json', 'ERNIE Image Turbo'],
   ['image_create', 'trama_imagem_newbie.json', 'NewBie (anime)'],
   ['image_create', 'imagem_anima_3090.json', 'Anima (ilustração)'],
+  ['image_edit', 'trama_editar_imagem_qwen_2_1.json', 'Qwen Image 2.1 (uma imagem)'],
+  ['image_edit', 'trama_editar_imagem_qwen_2_1_referencia.json', 'Qwen Image 2.1 (duas imagens: juntar pessoas, roupa, produto)'],
   ['image_edit', 'trama_editar_imagem_qwen_2511.json', 'Qwen-Image-Edit 2511'],
   ['image_edit', 'trama_editar_imagem_flux2_klein.json', 'Flux.2 Klein 4B (edição)'],
   ['image_edit', 'z_image_turbo_img2img_3090.json', 'Z-Image Turbo img2img (refazer a partir da imagem)'],
@@ -52,7 +54,7 @@ const BUILTIN = [
 // Modelo padrão de fábrica de cada categoria.
 const BUILTIN_DEFAULTS = {
   image_create: 'trama_imagem_z_image_turbo.json',
-  image_edit: 'trama_editar_imagem_qwen_2511.json',
+  image_edit: 'trama_editar_imagem_qwen_2_1.json',
   image_upscale: 'trama_ampliar_imagem.json',
   image_background: 'trama_remover_fundo.json',
   video_create: 'trama_video_h3_texto.json',

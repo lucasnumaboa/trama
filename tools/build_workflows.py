@@ -38,6 +38,15 @@ Texto → imagem rápido, bom com cenas e personagens, entende prompts em vário
 Texto → imagem focado em **anime e ilustração**.
 - **prompt** em inglês, estilo tags (personagem, cabelo, roupa, cenário, iluminação)."""),
     # ---- Editar imagem ----
+    dict(out='trama_editar_imagem_qwen_2_1', template='image_qwen_image_2_1_image_edit', drop_nodes=[472, 475], note="""## Editar imagem — Qwen Image 2.1
+Edita uma imagem por instrução mantendo pessoas, rosto e enquadramento: trocar fundo, roupa, cor, objeto, estilo, texto escrito, pose.
+- **Imagem 1** é a que será editada; o resultado sai no formato dela.
+- **prompt**: a instrução em inglês, direta; cite a imagem como `<image1>` (ex.: "Replace the background of <image1> with a beach at sunset, keep the person unchanged").
+- Para juntar duas fotos (duas pessoas, pessoa + produto), use o workflow trama_editar_imagem_qwen_2_1_referencia."""),
+    dict(out='trama_editar_imagem_qwen_2_1_referencia', template='image_qwen_image_2_1_image_edit', drop_nodes=[472], note="""## Editar imagem com referência — Qwen Image 2.1 (duas imagens)
+Monta uma imagem nova a partir de **duas** fotos: duas pessoas na mesma cena, pessoa vestindo a roupa da outra foto, produto na mão de alguém, logo aplicado num objeto.
+- **Imagem 1** é a base (o resultado sai no formato dela); **Imagem 2** é a referência.
+- **prompt** em inglês citando as fotos como `<image1>` e `<image2>`, dizendo o papel de cada uma e pedindo para manter rosto, cabelo e roupa (ex.: "<image1> and <image2> stand side by side at a churro cart, same faces and clothes as in their photos")."""),
     dict(out='trama_editar_imagem_qwen_2511', template='image_qwen_image_edit_2511_int8', note="""## Editar imagem — Qwen-Image-Edit 2511
 Edita uma imagem por instrução: trocar fundo, roupa, cor, objeto, estilo, adicionar ou tirar elementos, mudar texto escrito, ajustar pose.
 - **Imagem 1** é a que será editada; imagens extras (se houver entradas) servem de referência.
@@ -93,6 +102,19 @@ def all_nodes(w):
 def build(spec, tdir):
     w = json.load(open(f"{tdir}/{spec['template']}.json", encoding='utf-8'))
     swap = spec.get('swap', {})
+    # Remove nós do nível de cima (ex.: comparação lado a lado, segunda imagem) e os links deles.
+    drop = set(spec.get('drop_nodes', []))
+    if drop:
+        w['nodes'] = [n for n in w['nodes'] if n['id'] not in drop]
+        gone = {l[0] for l in w['links'] if l[1] in drop or l[3] in drop}
+        w['links'] = [l for l in w['links'] if l[0] not in gone]
+        for n in w['nodes']:
+            for i in n.get('inputs') or []:
+                if i.get('link') in gone:
+                    i['link'] = None
+            for o in n.get('outputs') or []:
+                if o.get('links'):
+                    o['links'] = [l for l in o['links'] if l not in gone]
     for n in all_nodes(w):
         wv = n.get('widgets_values')
         if isinstance(wv, list):

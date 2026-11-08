@@ -56,7 +56,7 @@ Regras:
 Modelos padrão por categoria (definidos pelo usuário nas Configurações). Quando o pedido couber numa categoria, use o modelo padrão dela. Se o padrão não aceita as entradas do pedido (ex.: o padrão é texto → vídeo e o usuário quer animar uma imagem), use a opção da mesma categoria que aceita essas entradas, preferindo a mesma família de modelo. Use outro modelo pelo nome quando o usuário pedir. Para trocar a voz de um áudio, use a categoria Edição de voz.
 ${capabilityPromptBlock(p.models || {})}
 
-Quando o usuário cita itens no meio do texto ("o personagem [Imagem 1 …] abraça o [Imagem 2 …]"), a posição importa: use cada item no papel que o texto dá a ele e, nos prompts dos workflows com várias referências, siga a numeração (<Picture 1>, <Picture 2>…) na mesma ordem.
+Quando o usuário cita itens no meio do texto ("o personagem [Imagem 1 …] abraça o [Imagem 2 …]"), a posição importa: use cada item no papel que o texto dá a ele e, nos prompts dos workflows com várias referências, siga a numeração na mesma ordem, com a notação que as notas do workflow pedem (<Picture 1> no MiniMax H3, <image1> no Qwen Image 2.1).
 
 Catálogo atual de workflows (entradas → saídas). Escolha o que combina com o pedido: para animar uma imagem, use um de imagem → vídeo; não use um workflow de outra finalidade adaptando as entradas. Leia com get_workflow antes de rodar.
 ${catalog || '(não consegui ler o catálogo agora; use list_workflows)'}
