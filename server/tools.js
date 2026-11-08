@@ -3,6 +3,7 @@
 import * as comfy from './comfy.js';
 import { describeByName, runWorkflow } from './exec.js';
 import { editMedia, mediaInfo, OPERATIONS, SINGLE_INPUT_OPS, NoChange } from './media.js';
+import { describeImage } from './vision.js';
 import {
   addAsset, updateAsset, saveProject, describeAsset, addEdge, emit, placeBelow, addVersion, selectVersion, removeAsset,
 } from './projects.js';
@@ -100,6 +101,12 @@ Nas operações de um arquivo só, o resultado vira uma NOVA VERSÃO do mesmo ca
       },
       required: ['operation', 'asset_ids'],
     },
+  },
+  {
+    name: 'look_at',
+    description:
+      'Olha uma imagem do projeto com um modelo de visão e devolve o que tem nela: cada pessoa (posição, idade, cabelo, roupa, o que faz, papel provável), o lugar, a luz e o enquadramento. A descrição fica guardada no card (fotos enviadas pelo usuário já chegam descritas). Use antes de planejar com uma foto e para conferir se uma imagem gerada saiu como pedido.',
+    parameters: { type: 'object', properties: { asset_id: { type: 'string' }, refresh: { type: 'boolean', description: 'true para olhar de novo (ex.: a imagem ganhou nova versão)' } }, required: ['asset_id'] },
   },
   {
     name: 'media_info',
@@ -555,6 +562,17 @@ export async function runTool(name, args, ctx) {
 
     case 'edit_media':
       return edit(ctx, args);
+
+    case 'look_at': {
+      const a = findAsset(p, args.asset_id);
+      if (a.kind !== 'image' || !a.file) throw new Error('look_at só olha imagens (para vídeo, olhe a imagem que deu origem a ele).');
+      if (!a.vision || args.refresh) {
+        ctx.step({ label: `Olhando "${a.title}"` });
+        updateAsset(p, a.id, { vision: await describeImage(a, { signal: ctx.signal }) });
+        saveProject(p);
+      }
+      return { label: `Olhou "${a.title}"`, result: { asset_id: a.id, title: a.title, description: a.vision } };
+    }
 
     case 'media_info': {
       const a = findAsset(p, args.asset_id);

@@ -84,81 +84,134 @@ function stepIcon(part) {
   return 'check';
 }
 
-/** Briefing do agente: várias perguntas, cada uma com opções (uma ou várias) e resposta livre. */
+/** Briefing do agente: uma pergunta por vez; as respondidas ficam resumidas em cima. */
 function Briefing({ part, onAnswer, running }) {
   // Formato antigo: uma pergunta só, respondida com um clique.
   const questions = part.questions || [{ question: part.question, options: part.options || [] }];
   const single = !part.questions && questions.length === 1;
+  const total = questions.length;
   const [picked, setPicked] = useState(() => questions.map(() => []));
   const [free, setFree] = useState(() => questions.map(() => ''));
+  const [step, setStep] = useState(0); // total = todas respondidas, mostra o resumo
   const done = Boolean(part.answer);
+  const box = useRef(null);
 
-  const toggle = (qi, opt, multiple) =>
-    setPicked((all) => all.map((list, i) => (i !== qi ? list : multiple ? (list.includes(opt) ? list.filter((o) => o !== opt) : [...list, opt]) : list[0] === opt ? [] : [opt])));
+  useEffect(() => {
+    if (!done && step > 0) box.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  }, [step, done]);
+
   const answerOf = (qi) => [...picked[qi], free[qi].trim()].filter(Boolean).join('; ');
-  const ready = questions.every((_, qi) => answerOf(qi));
-  const submit = () => {
-    const text = questions.map((q, qi) => `${q.question}\n→ ${answerOf(qi) || 'decida você'}`).join('\n\n');
-    onAnswer(text);
+  const next = () => setStep((k) => Math.min(k + 1, total));
+  const choose = (qi, opt, multiple) => {
+    if (single) return onAnswer(opt);
+    if (multiple) {
+      setPicked((all) => all.map((list, i) => (i !== qi ? list : list.includes(opt) ? list.filter((o) => o !== opt) : [...list, opt])));
+      return;
+    }
+    // Escolha única: marca e já passa para a próxima.
+    setPicked((all) => all.map((list, i) => (i === qi ? [opt] : list)));
+    next();
   };
+  const submit = () => onAnswer(questions.map((q, qi) => `${q.question}\n→ ${answerOf(qi) || 'decida você'}`).join('\n\n'));
 
-  return (
-    <div className="question">
-      <div className="q-head">
-        <Icon name="chat" size={14} /> {questions.length > 1 ? 'Briefing' : 'Confirmação'}
+  if (done) {
+    return (
+      <div className="question">
+        <div className="q-head">
+          <Icon name="chat" size={14} /> {total > 1 ? 'Briefing' : 'Confirmação'}
+        </div>
+        {single ? <div className="q-text">{questions[0].question}</div> : null}
+        <div className="q-answer">{single ? `Você respondeu: ${part.answer}` : part.answer}</div>
       </div>
-      {part.intro && <div className="q-intro">{part.intro}</div>}
-      {questions.map((q, qi) => (
-        <div key={qi} className="q-block">
+    );
+  }
+
+  const q = questions[step];
+  return (
+    <div className="question" ref={box}>
+      <div className="q-head">
+        <Icon name="chat" size={14} /> {total > 1 ? 'Briefing' : 'Confirmação'}
+        {total > 1 && (
+          <span className="q-progress">
+            {questions.map((_, k) => (
+              <i key={k} className={k < step ? 'ok' : k === step ? 'now' : ''} />
+            ))}
+            {step < total ? `${step + 1} de ${total}` : 'pronto'}
+          </span>
+        )}
+      </div>
+      {part.intro && step === 0 && <div className="q-intro">{part.intro}</div>}
+
+      {/* Respondidas: uma linha cada; clicar volta para ela. */}
+      {questions.slice(0, step).map((qq, qi) => (
+        <button key={qi} className="q-done" disabled={running} onClick={() => setStep(qi)} title="Mudar esta resposta">
+          <Icon name="check" size={12} />
+          <span className="q-done-q">{qq.question}</span>
+          <span className="q-done-a">{answerOf(qi) || 'decida você'}</span>
+        </button>
+      ))}
+
+      {q && (
+        <div className="q-block" key={step}>
           <div className="q-text">
-            {questions.length > 1 && <span className="q-num">{qi + 1}</span>}
             {q.question}
             {q.multiple && <small className="q-hint">pode marcar várias</small>}
           </div>
           <div className="q-options">
             {q.options.map((o, j) => {
-              const on = done ? String(part.answer).includes(o) : picked[qi].includes(o);
+              const on = picked[step].includes(o);
               return (
-                <button
-                  key={o}
-                  className={`q-opt ${on ? 'chosen' : ''}`}
-                  disabled={done || running}
-                  onClick={() => (single ? onAnswer(o) : toggle(qi, o, q.multiple))}
-                >
+                <button key={o} className={`q-opt ${on ? 'chosen' : ''}`} disabled={running} onClick={() => choose(step, o, q.multiple)}>
                   {on ? <Icon name="check" size={13} /> : <span className={`q-dot ${q.multiple ? 'q-box' : ''}`} />}
                   <span>{o}</span>
-                  {j === 0 && !done && <small>recomendado</small>}
+                  {j === 0 && <small>recomendado</small>}
                 </button>
               );
             })}
           </div>
-          {!done && !single && (
+          {!single && (
             <input
               className="q-free"
-              placeholder="Ou escreva do seu jeito…"
-              value={free[qi]}
+              placeholder="Ou escreva do seu jeito e tecle Enter…"
+              value={free[step]}
               disabled={running}
-              onChange={(e) => setFree((all) => all.map((v, i) => (i === qi ? e.target.value : v)))}
-              onKeyDown={(e) => e.key === 'Enter' && ready && submit()}
+              onChange={(e) => setFree((all) => all.map((v, i) => (i === step ? e.target.value : v)))}
+              onKeyDown={(e) => e.key === 'Enter' && answerOf(step) && next()}
             />
           )}
+          {!single && (
+            <div className="q-actions">
+              {step > 0 && (
+                <button className="q-skip" disabled={running} onClick={() => setStep(step - 1)}>
+                  Voltar
+                </button>
+              )}
+              <button className="q-skip" disabled={running} onClick={() => onAnswer('Decida você as perguntas que faltam do briefing, com as suas recomendações.' + (step ? '\n\n' + questions.slice(0, step).map((qq, qi) => `${qq.question}\n→ ${answerOf(qi)}`).join('\n\n') : ''))}>
+                Decida você
+              </button>
+              {(q.multiple || free[step].trim()) && (
+                <button className="q-send primary" disabled={!answerOf(step) || running} onClick={next}>
+                  Próxima
+                </button>
+              )}
+            </div>
+          )}
         </div>
-      ))}
-      {!done && !single && (
+      )}
+
+      {step >= total && (
         <div className="q-actions">
-          <button className="q-skip" disabled={running} onClick={() => onAnswer('Decida você as perguntas do briefing, com as suas recomendações.')}>
-            Decida você
+          <button className="q-skip" disabled={running} onClick={() => setStep(total - 1)}>
+            Voltar
           </button>
-          <button className="q-send primary" disabled={!ready || running} onClick={submit}>
+          <button className="q-send primary" disabled={running} onClick={submit}>
             Enviar respostas
           </button>
         </div>
       )}
-      {done && (single ? !q0Has(questions, part.answer) : true) && <div className="q-answer">Você respondeu: {part.answer}</div>}
     </div>
   );
 }
-const q0Has = (questions, answer) => questions[0]?.options?.includes(answer);
 
 function Message({ m, assets, onFocus, onAnswer, running }) {
   if (m.role === 'user') {

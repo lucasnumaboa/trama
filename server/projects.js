@@ -208,6 +208,7 @@ export function describeAsset(a) {
     out.versions = a.versions.map((v, i) => `${i + 1}: ${v.note || ''}`.trim());
   }
   if (a.origin) out.origin = a.origin;
+  if (a.vision) out.looks_like = a.vision.length > 700 ? `${a.vision.slice(0, 700)}…` : a.vision;
   if (a.error) out.error = a.error;
   return out;
 }

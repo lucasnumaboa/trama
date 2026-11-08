@@ -281,6 +281,18 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 .q-free:focus { outline: none; border-color: var(--primary); }
 .q-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
 .q-send:disabled { opacity: 0.45; }
+.q-progress { margin-left: auto; display: flex; align-items: center; gap: 4px; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--muted); }
+.q-progress i { width: 6px; height: 6px; border-radius: 50%; background: var(--line-2); }
+.q-progress i.ok { background: var(--ok); }
+.q-progress i.now { background: var(--primary); }
+.q-progress i:last-of-type { margin-right: 4px; }
+.q-done { display: flex; align-items: baseline; gap: 7px; justify-content: flex-start; text-align: left; background: transparent; border: none; padding: 3px 2px; font-size: 12px; color: var(--muted); }
+.q-done .icon { color: var(--ok); flex: none; align-self: center; }
+.q-done-q { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.q-done-a { color: var(--text); max-width: 55%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.q-done:hover:not(:disabled) .q-done-q { color: var(--text); }
+.q-block { animation: q-in 0.18s ease-out; }
+@keyframes q-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .msg-error { color: #ffa3a6; background: rgba(255, 107, 112, 0.07); border: 1px solid rgba(255, 107, 112, 0.25); border-radius: 10px; padding: 9px 11px; word-break: break-word; line-height: 1.45; }
 .thinking { display: flex; gap: 4px; padding: 4px 2px; }
 .thinking span { width: 6px; height: 6px; border-radius: 50%; background: var(--primary); animation: blink 1.2s infinite; }

@@ -6,6 +6,7 @@ import { getProject, saveProject, emit, shortId, describeAsset } from './project
 import { capabilityPromptBlock } from './capabilities.js';
 import * as comfy from './comfy.js';
 import { getSettings } from './settings.js';
+import { describeImage } from './vision.js';
 
 const running = new Map(); // projectId -> AbortController
 const MAX_STEPS = 40;
@@ -73,6 +74,8 @@ Regras:
 Modelos padrão por categoria (definidos pelo usuário nas Configurações). Quando o pedido couber numa categoria, use o modelo padrão dela. Se o padrão não aceita as entradas do pedido (ex.: o padrão é texto → vídeo e o usuário quer animar uma imagem), use a opção da mesma categoria que aceita essas entradas, preferindo a mesma família de modelo. Use outro modelo pelo nome quando o usuário pedir. Para trocar a voz de um áudio, use a categoria Edição de voz.
 ${capabilityPromptBlock(p.models || {})}
 
+Fotos do usuário (regra forte): quando ele manda uma foto, ela é a fonte. As pessoas, o lugar, as roupas e os objetos da foto são os do trabalho; você recebe a descrição de cada imagem anexada (ou use look_at). Ligue o pedido a quem está na foto: "a pessoa", "ele", "eles" são as pessoas da foto (ex.: numa foto com vendedor e cliente, "ele vai comprar" é o cliente e "eles vão conversar" são os dois). Nunca invente um personagem que não está na foto nem troque alguém da foto por outra pessoa. Só crie personagem novo se o usuário pedir ou se a história exigir alguém que não está em nenhuma foto, e nesse caso pergunte antes ("a história pede uma segunda pessoa; crio uma ou você manda a foto?"). Não pergunte o que a foto já mostra; pergunte só o que ela não responde. Para outros ângulos e cenas, edite a partir da foto (Editar imagem) em vez de gerar do zero.
+
 Quando o usuário cita itens no meio do texto ("o personagem [Imagem 1 …] abraça o [Imagem 2 …]"), a posição importa: use cada item no papel que o texto dá a ele e, nos prompts dos workflows com várias referências, siga a numeração na mesma ordem, com a notação que as notas do workflow pedem (<Picture 1> no MiniMax H3, <image1> no Qwen Image 2.1).
 
 Catálogo atual de workflows (entradas → saídas). Escolha o que combina com o pedido: para animar uma imagem, use um de imagem → vídeo; não use um workflow de outra finalidade adaptando as entradas. Leia com get_workflow antes de rodar.
@@ -112,7 +115,10 @@ function modelText(p, text, attachments) {
   const body = text.replace(REF, (m, id) => (label[id] ? `[${label[id]}]` : m));
   const extra = attachments.filter((id) => label[id] && !text.includes(`@{${id}}`));
   const note = extra.length ? `\n\n[Anexos sem posição no texto: ${extra.map((id) => label[id]).join('; ')}]` : '';
-  return body + note;
+  // O que tem em cada imagem anexada (lido pelo modelo de visão).
+  const seen = order.map((id) => p.assets.find((a) => a.id === id)).filter((a) => a?.vision);
+  const vision = seen.length ? `\n\n[O que tem nas imagens anexadas — descrito pelo modelo de visão:]\n${seen.map((a) => `${label[a.id]}:\n${a.vision}`).join('\n\n')}` : '';
+  return body + note + vision;
 }
 
 /** Texto legível (título do projeto): referências viram o título do card. */
@@ -154,7 +160,6 @@ export async function sendMessage(projectId, { text, attachments = [], model }) 
     emit(p.id, { type: 'project', title: p.title });
   }
   const turnStart = p.llm.length;
-  p.llm.push({ role: 'user', content: modelText(p, clean, user.attachments) });
   saveProject(p);
   emit(p.id, { type: 'message', message: user });
   emit(p.id, { type: 'message', message: reply });
@@ -166,6 +171,26 @@ export async function sendMessage(projectId, { text, attachments = [], model }) 
 
   (async () => {
     try {
+      // Olha as fotos anexadas antes de pensar: o agente precisa saber quem e o que
+      // está nelas para usar isso em vez de inventar personagens.
+      const toSee = user.attachments.map((id) => p.assets.find((a) => a.id === id)).filter((a) => a?.kind === 'image' && a.file && !a.vision);
+      for (const a of toSee) {
+        const part = { type: 'step', id: shortId('look'), tool: 'look_at', label: `Olhando "${a.title}"`, status: 'running', assetIds: [a.id] };
+        reply.parts.push(part);
+        push();
+        try {
+          a.vision = await describeImage(a, { signal: controller.signal });
+          Object.assign(part, { status: 'done', label: `Olhou "${a.title}"` });
+        } catch (error) {
+          Object.assign(part, { status: 'error', error: error.message, label: `Não consegui olhar "${a.title}"` });
+        }
+        saveProject(p);
+        push();
+        if (controller.signal.aborted) throw new Error('Cancelado pelo usuário');
+      }
+      p.llm.push({ role: 'user', content: modelText(p, clean, user.attachments) });
+      saveProject(p);
+
       for (let step = 0; step < MAX_STEPS; step++) {
         reply.thinking = true;
         push();
@@ -230,6 +255,8 @@ export async function sendMessage(projectId, { text, attachments = [], model }) 
       reply.status = controller.signal.aborted ? 'stopped' : 'error';
       if (!controller.signal.aborted) reply.parts.push({ type: 'error', text: error.message });
     } finally {
+      // Parado ainda olhando as fotos: a mensagem do usuário entra no histórico mesmo assim.
+      if (p.llm.length === turnStart) p.llm.push({ role: 'user', content: modelText(p, clean, user.attachments) });
       // Mantém o histórico do modelo consistente: chamadas sem resposta recebem um erro.
       const pendingIds = new Set();
       for (const m of p.llm.slice(turnStart)) {
