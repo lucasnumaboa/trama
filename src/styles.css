@@ -270,7 +270,17 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 .q-opt:hover:not(:disabled) .q-dot { border-color: var(--primary); }
 .q-opt.chosen { border-color: var(--ok); color: var(--text); opacity: 1; background: rgba(60, 207, 142, 0.06); }
 .q-opt.chosen .icon { color: var(--ok); }
-.q-answer { font-size: 12px; color: var(--muted); }
+.q-answer { font-size: 12px; color: var(--muted); white-space: pre-wrap; }
+.q-intro { line-height: 1.5; color: var(--text); }
+.q-block { display: flex; flex-direction: column; gap: 7px; padding-top: 4px; }
+.q-block + .q-block { border-top: 1px solid var(--line); padding-top: 11px; }
+.q-num { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--primary); color: #fff; font-size: 11px; font-weight: 600; margin-right: 7px; vertical-align: 1px; }
+.q-hint { color: var(--muted); font-size: 11px; font-weight: 400; margin-left: 6px; }
+.q-box { border-radius: 4px; }
+.q-free { background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px; padding: 8px 11px; color: var(--text); font: inherit; font-size: 13px; }
+.q-free:focus { outline: none; border-color: var(--primary); }
+.q-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+.q-send:disabled { opacity: 0.45; }
 .msg-error { color: #ffa3a6; background: rgba(255, 107, 112, 0.07); border: 1px solid rgba(255, 107, 112, 0.25); border-radius: 10px; padding: 9px 11px; word-break: break-word; line-height: 1.45; }
 .thinking { display: flex; gap: 4px; padding: 4px 2px; }
 .thinking span { width: 6px; height: 6px; border-radius: 50%; background: var(--primary); animation: blink 1.2s infinite; }

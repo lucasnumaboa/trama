@@ -153,11 +153,27 @@ Nas operações de um arquivo só, o resultado vira uma NOVA VERSÃO do mesmo ca
   {
     name: 'ask_user',
     description:
-      'Faz uma pergunta com opções clicáveis e encerra sua vez. Use só quando faltar uma decisão importante que você não consegue tomar sozinho. Ponha sua recomendação como primeira opção.',
+      'Mostra ao usuário um briefing com 1 a 6 perguntas, cada uma com opções clicáveis (sua recomendação primeiro) e campo livre, e encerra sua vez até ele responder. Use para propor ideias e fechar decisões criativas antes de gerar: roteiro e cenas, duração, formato, estilo, música, falas, idioma. Junte tudo num briefing só em vez de perguntar uma coisa por vez.',
     parameters: {
       type: 'object',
-      properties: { question: { type: 'string' }, options: { type: 'array', items: { type: 'string' }, description: '2 a 4 opções curtas' } },
-      required: ['question', 'options'],
+      properties: {
+        intro: { type: 'string', description: 'Uma ou duas frases antes das perguntas (ex.: a ideia que você teve para a história).' },
+        questions: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 6,
+          items: {
+            type: 'object',
+            properties: {
+              question: { type: 'string' },
+              options: { type: 'array', items: { type: 'string' }, description: '2 a 5 opções concretas e curtas; a primeira é a sua recomendação' },
+              multiple: { type: 'boolean', description: 'true se o usuário pode marcar várias opções (ex.: quais cenas extras incluir)' },
+            },
+            required: ['question', 'options'],
+          },
+        },
+      },
+      required: ['questions'],
     },
   },
 ];
@@ -193,6 +209,11 @@ function workflowSummary(d) {
   };
 }
 
+// Campo de duração do resultado (segundos), quando o workflow tem um.
+export function durationField(d) {
+  return d.fields.find((f) => f.kind === 'number' && /dura[cç][aã]o|duration|seconds?|segundos/i.test(`${f.label} ${f.nodeTitle} ${f.input}`));
+}
+
 // O campo de texto principal: o prompt positivo (não o negativo nem um prompt de sistema).
 export function promptField(d) {
   const texts = d.fields.filter((f) => f.kind === 'text' && !f.internal && !/negative|negativ/i.test(`${f.input} ${f.nodeTitle}`));
@@ -223,6 +244,10 @@ function workflowDetail(d) {
       })),
     // Campo onde vai a instrução/descrição do usuário (o padrão é só o exemplo do template).
     prompt_field: promptField(d)?.id,
+    duration_field: (() => {
+      const f = durationField(d);
+      return f ? { id: f.id, default: f.default, min: f.min, max: f.max } : undefined;
+    })(),
     outputs: d.outputs.map((o) => ({ kind: o.kind, node: o.title })),
   };
 }
@@ -367,7 +392,7 @@ async function generate(ctx, { name, values = {}, inputs = {}, allowDefault = fa
     const what = Object.entries(counts).map(([k, n]) => plural(n, k)).join(' e ');
     const label = reviseId ? `Nova versão de "${target.title}" com ${d.title}` : `Gerou ${what} com ${d.title}`;
     // Duração pedida (campo de duração/segundos), para conferir com a real.
-    const durField = d.fields.find((f) => f.kind === 'number' && /dura[cç][aã]o|seconds?|segundos/i.test(`${f.label} ${f.nodeTitle} ${f.input}`));
+    const durField = durationField(d);
     const asked = durField ? Number(resolved[durField.id] ?? durField.default) : undefined;
     const { checks, warnings } = await inspectAll(created, { expect: Number.isFinite(asked) && asked > 0 ? { duration: asked } : {} });
     return { label, assetIds: created.map((a) => a.id), warnings, result: { ok: true, created: created.map(describeAsset), seeds, checks, warnings } };
@@ -586,13 +611,21 @@ export async function runTool(name, args, ctx) {
       return { label: `Leu "${a.title}"`, result: { id: a.id, title: a.title, text: a.text } };
     }
 
-    case 'ask_user':
+    case 'ask_user': {
+      // Aceita também o formato antigo (uma pergunta solta).
+      const list = Array.isArray(args.questions) && args.questions.length ? args.questions : [{ question: args.question, options: args.options }];
+      const questions = list
+        .filter((q) => q && String(q.question || '').trim())
+        .slice(0, 6)
+        .map((q) => ({ question: String(q.question).trim(), options: (q.options || []).map(String).filter(Boolean).slice(0, 5), multiple: Boolean(q.multiple) }));
+      if (!questions.length) throw new Error('ask_user precisa de pelo menos uma pergunta com texto.');
       return {
         label: 'Pergunta',
-        question: { question: args.question, options: (args.options || []).slice(0, 4) },
+        question: { intro: args.intro ? String(args.intro).trim() : undefined, questions },
         endTurn: true,
         result: { ok: true, note: 'Pergunta mostrada ao usuário. Aguarde a resposta dele.' },
       };
+    }
 
     default:
       throw new Error(`Ferramenta desconhecida: ${name}`);

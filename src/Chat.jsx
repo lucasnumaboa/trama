@@ -84,6 +84,82 @@ function stepIcon(part) {
   return 'check';
 }
 
+/** Briefing do agente: várias perguntas, cada uma com opções (uma ou várias) e resposta livre. */
+function Briefing({ part, onAnswer, running }) {
+  // Formato antigo: uma pergunta só, respondida com um clique.
+  const questions = part.questions || [{ question: part.question, options: part.options || [] }];
+  const single = !part.questions && questions.length === 1;
+  const [picked, setPicked] = useState(() => questions.map(() => []));
+  const [free, setFree] = useState(() => questions.map(() => ''));
+  const done = Boolean(part.answer);
+
+  const toggle = (qi, opt, multiple) =>
+    setPicked((all) => all.map((list, i) => (i !== qi ? list : multiple ? (list.includes(opt) ? list.filter((o) => o !== opt) : [...list, opt]) : list[0] === opt ? [] : [opt])));
+  const answerOf = (qi) => [...picked[qi], free[qi].trim()].filter(Boolean).join('; ');
+  const ready = questions.every((_, qi) => answerOf(qi));
+  const submit = () => {
+    const text = questions.map((q, qi) => `${q.question}\n→ ${answerOf(qi) || 'decida você'}`).join('\n\n');
+    onAnswer(text);
+  };
+
+  return (
+    <div className="question">
+      <div className="q-head">
+        <Icon name="chat" size={14} /> {questions.length > 1 ? 'Briefing' : 'Confirmação'}
+      </div>
+      {part.intro && <div className="q-intro">{part.intro}</div>}
+      {questions.map((q, qi) => (
+        <div key={qi} className="q-block">
+          <div className="q-text">
+            {questions.length > 1 && <span className="q-num">{qi + 1}</span>}
+            {q.question}
+            {q.multiple && <small className="q-hint">pode marcar várias</small>}
+          </div>
+          <div className="q-options">
+            {q.options.map((o, j) => {
+              const on = done ? String(part.answer).includes(o) : picked[qi].includes(o);
+              return (
+                <button
+                  key={o}
+                  className={`q-opt ${on ? 'chosen' : ''}`}
+                  disabled={done || running}
+                  onClick={() => (single ? onAnswer(o) : toggle(qi, o, q.multiple))}
+                >
+                  {on ? <Icon name="check" size={13} /> : <span className={`q-dot ${q.multiple ? 'q-box' : ''}`} />}
+                  <span>{o}</span>
+                  {j === 0 && !done && <small>recomendado</small>}
+                </button>
+              );
+            })}
+          </div>
+          {!done && !single && (
+            <input
+              className="q-free"
+              placeholder="Ou escreva do seu jeito…"
+              value={free[qi]}
+              disabled={running}
+              onChange={(e) => setFree((all) => all.map((v, i) => (i === qi ? e.target.value : v)))}
+              onKeyDown={(e) => e.key === 'Enter' && ready && submit()}
+            />
+          )}
+        </div>
+      ))}
+      {!done && !single && (
+        <div className="q-actions">
+          <button className="q-skip" disabled={running} onClick={() => onAnswer('Decida você as perguntas do briefing, com as suas recomendações.')}>
+            Decida você
+          </button>
+          <button className="q-send primary" disabled={!ready || running} onClick={submit}>
+            Enviar respostas
+          </button>
+        </div>
+      )}
+      {done && (single ? !q0Has(questions, part.answer) : true) && <div className="q-answer">Você respondeu: {part.answer}</div>}
+    </div>
+  );
+}
+const q0Has = (questions, answer) => questions[0]?.options?.includes(answer);
+
 function Message({ m, assets, onFocus, onAnswer, running }) {
   if (m.role === 'user') {
     const inline = new Set([...String(m.text).matchAll(/@\{(asset_[0-9a-f]{8})\}/g)].map((x) => x[1]));
@@ -112,30 +188,7 @@ function Message({ m, assets, onFocus, onAnswer, running }) {
         if (part.type === 'text') return <RichText key={i} text={part.text} />;
         if (part.type === 'step') return <Step key={part.id || i} part={part} assets={assets} onFocus={onFocus} />;
         if (part.type === 'error') return <div key={i} className="msg-error">{part.text}</div>;
-        if (part.type === 'question')
-          return (
-            <div key={i} className="question">
-              <div className="q-head">
-                <Icon name="chat" size={14} /> Confirmação
-              </div>
-              <div className="q-text">{part.question}</div>
-              <div className="q-options">
-                {part.options.map((o, j) => (
-                  <button
-                    key={o}
-                    className={`q-opt ${part.answer === o ? 'chosen' : ''}`}
-                    disabled={Boolean(part.answer) || running}
-                    onClick={() => onAnswer(o)}
-                  >
-                    {part.answer === o ? <Icon name="check" size={13} /> : <span className="q-dot" />}
-                    <span>{o}</span>
-                    {j === 0 && !part.answer && <small>recomendado</small>}
-                  </button>
-                ))}
-              </div>
-              {part.answer && !part.options.includes(part.answer) && <div className="q-answer">Você respondeu: {part.answer}</div>}
-            </div>
-          );
+        if (part.type === 'question') return <Briefing key={i} part={part} onAnswer={onAnswer} running={running} />;
         return null;
       })}
       {m.thinking && (
