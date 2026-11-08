@@ -103,8 +103,9 @@ function collectFiles(history, desc, prompt, seeds) {
   for (const nodeId of order) {
     if (seen.has(nodeId)) continue;
     seen.add(nodeId);
-    const isPreview = /^Preview/i.test(prompt[nodeId]?.class_type || '');
-    for (const f of byNode[nodeId] || []) files.push({ ...f, nodeId, preview: isPreview });
+    // PreviewImage, MaskPreview, PreviewAny… e qualquer arquivo temporário são só prévia.
+    const isPreview = /preview/i.test(prompt[nodeId]?.class_type || '');
+    for (const f of byNode[nodeId] || []) files.push({ ...f, nodeId, preview: isPreview || f.type === 'temp' });
   }
   // Se houver saídas "Save", ignora as "Preview" (são cópias temporárias).
   const saved = files.filter((f) => !f.preview);

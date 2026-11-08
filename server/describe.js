@@ -40,7 +40,18 @@ export function describeWorkflow(name, workflow, objectInfo) {
     .map((n) => String(n.widgets_values?.[0] || '').trim())
     .filter(Boolean);
 
+  // O ComfyUI só executa o que chega a um nó de saída. Um Load Image ligado só a um
+  // ramo desativado (bypass/mudo) não é entrada de verdade nem deve ser exigido.
+  const used = new Set();
+  const visit = (id) => {
+    if (used.has(id) || !prompt[id]) return;
+    used.add(id);
+    for (const v of Object.values(prompt[id].inputs)) if (Array.isArray(v)) visit(String(v[0]));
+  };
+  for (const [id, n] of Object.entries(prompt)) if (objectInfo[n.class_type]?.output_node) visit(id);
+
   for (const id of Object.keys(prompt).sort(sortIds)) {
+    if (!used.has(id)) continue;
     const { class_type: type, inputs } = prompt[id];
     const def = objectInfo[type];
     const title = nodes[id].title;

@@ -155,6 +155,20 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
     }
   }, [project?.id, fitView]);
 
+  // Card novo (gerado ou enviado) entra na visão: reencaixa tudo com animação.
+  const knownIds = useRef({ project: null, ids: new Set() });
+  useEffect(() => {
+    const ids = (project?.assets || []).map((a) => a.id);
+    const known = knownIds.current;
+    if (known.project !== project?.id) {
+      knownIds.current = { project: project?.id, ids: new Set(ids) };
+      return;
+    }
+    const fresh = ids.filter((id) => !known.ids.has(id));
+    ids.forEach((id) => known.ids.add(id));
+    if (fresh.length) setTimeout(() => fitView({ padding: 0.2, maxZoom: 1, duration: 400 }), 120);
+  }, [project?.id, project?.assets, fitView]);
+
   // Centraliza um card pedido pelo chat.
   useEffect(() => {
     if (!focusId) return;

@@ -77,7 +77,7 @@ Música com voz e letra, mais leve que o XL.
     # ---- Utilidades ----
     dict(out='trama_ampliar_imagem', template='utility-gan_upscaler', swap={'RealESRGAN_x4plus.safetensors': 'RealESRGAN_x4plus.pth'}, note="""## Ampliar imagem — RealESRGAN 4x
 Aumenta a resolução em 4x mantendo nitidez. Troque o modelo para `4xNomosWebPhoto_RealPLKSR.pth` (fotos) ou `RealESRGAN_x2plus.pth` (2x)."""),
-    dict(out='trama_remover_fundo', template='utility_birefnet_remove_background', note="""## Remover fundo — BiRefNet
+    dict(out='trama_remover_fundo', template='utility_birefnet_remove_background', preview_to_save=True, note="""## Remover fundo — BiRefNet
 Recorta o objeto/pessoa e deixa o fundo transparente (PNG)."""),
 ]
 
@@ -105,6 +105,13 @@ def build(spec, tdir):
                 if 'cfg' in spec['ksampler']: n['widgets_values'][3] = spec['ksampler']['cfg']
             if n['type'].startswith('Save') and wv and isinstance(wv[0], str) and n['type'] not in ('SaveLatent',):
                 n['widgets_values'][0] = f"trama/{spec['out']}"
+    # Template que só mostra prévia (arquivo temporário): passa a salvar de verdade.
+    if spec.get('preview_to_save'):
+        for n in w['nodes']:
+            if n['type'] == 'PreviewImage':
+                n['type'] = 'SaveImage'
+                n['widgets_values'] = [f"trama/{spec['out']}"]
+                n.setdefault('properties', {})['Node name for S&R'] = 'SaveImage'
     # Desliga instâncias de subgrafo que usam arquivos inexistentes.
     if spec.get('bypass_subgraph_files'):
         subs = {sg['id']: sg for sg in (w.get('definitions') or {}).get('subgraphs', [])}

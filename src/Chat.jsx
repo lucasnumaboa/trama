@@ -50,7 +50,7 @@ function Step({ part, assets, onFocus }) {
     <div className={`step step-${part.status}`}>
       <button className="step-head" onClick={() => setOpen((v) => !v)}>
         {icon}
-        <span>{part.label}</span>
+        <span className="step-label">{part.label}</span>
         {(part.error || list.length > 0) && <Icon name="chevron" size={12} className={`step-chevron ${open ? 'rot' : ''}`} />}
       </button>
       {part.warnings?.length > 0 && (

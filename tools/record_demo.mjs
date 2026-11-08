@@ -103,5 +103,7 @@ const palette = path.join(frames, 'palette.png');
 const filters = 'mpdecimate=hi=64*24:lo=64*8:frac=0.2,setpts=N/(8*TB),scale=1100:-1:flags=lanczos';
 execFileSync('ffmpeg', ['-y', '-v', 'error', '-framerate', '8', '-i', path.join(frames, 'f%04d.png'), '-vf', `${filters},palettegen=stats_mode=diff`, palette]);
 execFileSync('ffmpeg', ['-y', '-v', 'error', '-framerate', '8', '-i', path.join(frames, 'f%04d.png'), '-i', palette, '-lavfi', `${filters}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=4`, '-loop', '0', out]);
+// KEEP_FRAMES=<pasta> guarda os quadros para conferir antes de publicar o GIF.
+if (process.env.KEEP_FRAMES) fs.cpSync(frames, process.env.KEEP_FRAMES, { recursive: true });
 fs.rmSync(frames, { recursive: true, force: true });
 console.log(`saved ${out} (${(fs.statSync(out).size / 1048576).toFixed(1)} MB, ${n} frames captured), project ${project.id}`);
