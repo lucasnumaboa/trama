@@ -5,22 +5,62 @@
   "license": "MIT",
   "type": "module",
   "description": "Multi-orchestrator for ComfyUI: chat with an AI agent that plans, runs your ComfyUI workflows and builds the creative flow on a canvas",
+  "author": "Trama",
+  "homepage": "https://github.com/lucasnumaboa/trama",
+  "main": "electron/main.mjs",
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"node --watch server/index.js\" \"vite\"",
     "build": "vite build",
     "start": "vite build && node server/index.js",
-    "test": "node --test \"server/**/*.test.js\""
+    "test": "node --test \"server/**/*.test.js\"",
+    "app": "vite build && electron .",
+    "dist": "vite build && electron-builder --win nsis"
   },
   "dependencies": {
-    "@xyflow/react": "12.8.6",
-    "express": "4.21.2",
-    "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "express": "4.21.2"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "4.3.4",
+    "@xyflow/react": "12.8.6",
     "concurrently": "9.1.2",
+    "electron": "44.9.3",
+    "electron-builder": "26.18.0",
     "puppeteer-core": "^23.11.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
     "vite": "6.0.7"
+  },
+  "build": {
+    "appId": "io.github.lucasnumaboa.trama",
+    "productName": "Trama",
+    "directories": {
+      "output": "installer/output",
+      "buildResources": "installer"
+    },
+    "files": [
+      "electron/**",
+      "server/**",
+      "!server/**/*.test.js",
+      "!server/fixtures/**",
+      "dist/**",
+      "public/**",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "installer/trama.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Trama",
+      "installerIcon": "installer/trama.ico",
+      "uninstallerIcon": "installer/trama.ico",
+      "artifactName": "Trama-Setup-${version}.exe",
+      "deleteAppDataOnUninstall": false
+    }
   }
 }

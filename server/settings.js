@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const DATA_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data');
+// No app instalado os dados ficam na pasta do usuário (TRAMA_DATA_DIR); no repositório, em data/.
+const DATA_DIR = process.env.TRAMA_DATA_DIR || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data');
 const FILE = path.join(DATA_DIR, 'settings.json');
 
 const DEFAULTS = {

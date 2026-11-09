@@ -179,6 +179,11 @@ if (fs.existsSync(dist)) {
   app.get(/^(?!\/api\/).*/, (req, res) => res.sendFile(path.join(dist, 'index.html')));
 }
 
-app.listen(PORT, '127.0.0.1', () => {
-  console.log(`Trama rodando em http://127.0.0.1:${PORT}`);
+// O app de desktop (electron/main.mjs) espera o servidor subir antes de abrir a janela.
+export const ready = new Promise((resolve, reject) => {
+  const server = app.listen(PORT, '127.0.0.1', () => {
+    console.log(`Trama rodando em http://127.0.0.1:${PORT}`);
+    resolve(PORT);
+  });
+  server.on('error', reject);
 });

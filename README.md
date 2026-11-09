@@ -121,7 +121,9 @@ node tools/test_workflows.mjs              # also runs the fast ones for real
 
 ### Building the installer
 
-`build-installer.bat` builds a Windows installer (`installer/output/Trama-Setup-<version>.exe`) with [Inno Setup 6](https://jrsoftware.org/isinfo.php). The installer never includes your settings, API key or projects. The installed app still needs Node.js, ComfyUI and ffmpeg on the machine.
+`build-installer.bat` (or `npm run dist`) builds a Windows installer, `installer/output/Trama-Setup-<version>.exe`, with Electron and electron-builder. Run the exe to install Trama for the current user. It adds Start menu and desktop shortcuts and opens Trama in its own window, with no browser or console window.
+
+The installed app bundles its own runtime, so Node.js is not needed on that machine. ComfyUI must be running, and ffmpeg must be on the PATH for video and audio tools. Settings, the API key and projects are stored in `%APPDATA%\Trama\data`, never inside the installer, and uninstalling keeps them. The app uses port 5190, or the next free port if 5190 is taken. `npm run app` opens the same desktop window without installing.
 
 ## How it works
 

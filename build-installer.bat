@@ -10,27 +10,16 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [1/3] Installing dependencies...
+echo [1/2] Installing dependencies...
 call npm install
 if errorlevel 1 goto fail
 
-echo [2/3] Building the interface...
-call npm run build
-if errorlevel 1 goto fail
-
-echo [3/3] Building the installer with Inno Setup...
-set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
-if not exist "%ISCC%" set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-if not exist "%ISCC%" (
-  echo Inno Setup 6 was not found. Install it from https://jrsoftware.org/isinfo.php and run this file again.
-  pause
-  exit /b 1
-)
-"%ISCC%" "%~dp0installer\trama.iss"
+echo [2/2] Building the interface and the installer...
+call npm run dist
 if errorlevel 1 goto fail
 
 echo.
-echo Installer ready in the installer\output folder.
+echo Installer ready: installer\output\Trama-Setup-*.exe
 pause
 exit /b 0
 
