@@ -1,6 +1,8 @@
 // Cliente do ComfyUI local: catálogo de nós, workflows salvos, upload,
 // envio de prompts, progresso por WebSocket e resultados por /history.
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { getSettings } from './settings.js';
 
 const base = () => getSettings().comfyUrl;
@@ -70,6 +72,47 @@ export async function uploadInput(buffer, filename, { overwrite = true } = {}) {
 export async function fetchFile({ filename, subfolder = '', type = 'output' }) {
   const qs = new URLSearchParams({ filename, subfolder, type });
   return request(`/view?${qs}`, { timeout: 60000, streamBody: true });
+}
+
+// ---- Arquivo no disco (para "Mostrar na pasta") ------------------------------
+// O ComfyUI não informa as pastas de saída, mas informa a de custom_nodes: a base é a
+// pasta acima dela. --output-directory e afins, se usados, valem mais.
+let dirsCache = null;
+async function comfyDirs() {
+  if (dirsCache && Date.now() - dirsCache.at < 60000) return dirsCache.value;
+  const [paths, stats] = await Promise.all([getJson('/internal/folder_paths', { timeout: 5000 }), systemStats()]);
+  const customNodes = paths.custom_nodes?.[0];
+  if (!customNodes) throw new Error('O ComfyUI não informou as pastas dele.');
+  const sep = customNodes.includes('\\') ? '\\' : '/';
+  const base = customNodes.slice(0, customNodes.lastIndexOf(sep));
+  const argv = stats?.system?.argv || [];
+  // Caminhos relativos nos argumentos partem da pasta onde o ComfyUI foi iniciado.
+  const mainDir = path.dirname(argv[0] || 'main.py');
+  const cwd = mainDir !== '.' && !path.isAbsolute(argv[0] || '') && base.toLowerCase().endsWith(mainDir.toLowerCase()) ? base.slice(0, base.length - mainDir.length - 1) : base;
+  const arg = (name) => {
+    const i = argv.indexOf(name);
+    return i >= 0 && argv[i + 1] ? path.resolve(cwd, argv[i + 1]) : null;
+  };
+  const value = {
+    output: arg('--output-directory') || path.join(base, 'output'),
+    input: arg('--input-directory') || path.join(base, 'input'),
+    temp: arg('--temp-directory') || path.join(base, 'temp'),
+  };
+  dirsCache = { at: Date.now(), value };
+  return value;
+}
+
+/** Caminho do arquivo neste computador, ou erro se o ComfyUI roda em outra máquina. */
+export async function localPathOf({ filename, subfolder = '', type = 'output' }) {
+  const dirs = await comfyDirs();
+  const root = dirs[type];
+  if (!root) throw new Error(`Tipo de arquivo desconhecido: ${type}`);
+  const full = path.resolve(root, subfolder || '', filename);
+  if (!full.toLowerCase().startsWith(path.resolve(root).toLowerCase() + path.sep)) throw new Error('Caminho inválido.');
+  if (!fs.existsSync(full)) {
+    throw new Error(`O arquivo não está neste computador (${full}). Se o ComfyUI roda em outra máquina da rede, use Baixar.`);
+  }
+  return full;
 }
 
 export const viewUrl = ({ filename, subfolder = '', type = 'output' }) =>

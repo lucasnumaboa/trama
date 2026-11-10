@@ -38,8 +38,20 @@ export const api = {
     }),
   updateAsset: (id, assetId, patch) => call(`/api/projects/${id}/assets/${assetId}`, json('PATCH', patch)),
   deleteAsset: (id, assetId) => call(`/api/projects/${id}/assets/${assetId}`, { method: 'DELETE' }),
+  revealFile: (f) => call('/api/comfy/reveal', json('POST', { filename: f.filename, subfolder: f.subfolder || '', type: f.type || 'output' })),
   restoreAssets: (id, assets, edges) => call(`/api/projects/${id}/assets/restore`, json('POST', { assets, edges })),
 };
 
 export const fileUrl = (f) =>
   f ? `/api/comfy/view?${new URLSearchParams({ filename: f.filename, subfolder: f.subfolder || '', type: f.type || 'output' })}` : '';
+
+/** Baixa o arquivo (o servidor manda como anexo; no app de desktop abre "Salvar como"). */
+export function downloadFile(f) {
+  if (!f) return;
+  const a = document.createElement('a');
+  a.href = `${fileUrl(f)}&download=1`;
+  a.download = f.filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}

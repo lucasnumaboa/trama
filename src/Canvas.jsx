@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlow, Background, MiniMap, Handle, Position, useReactFlow, useViewport, applyNodeChanges } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { api, fileUrl } from './api.js';
+import { api, fileUrl, downloadFile } from './api.js';
 import { Icon, KIND_LABEL } from './ui.jsx';
 
 function VersionSwitch({ asset, onVersion }) {
@@ -167,6 +167,38 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
   const [nodes, setNodes] = useState([]);
   const [showMap, setShowMap] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  // Menu do botão direito num card: { x, y, asset }.
+  const [menu, setMenu] = useState(null);
+  const [notice, setNotice] = useState('');
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e) => {
+      if (e.type === 'keydown' && e.key !== 'Escape') return;
+      if (e.type === 'pointerdown' && e.target.closest?.('.card-menu')) return;
+      setMenu(null);
+    };
+    window.addEventListener('pointerdown', close, true);
+    window.addEventListener('keydown', close, true);
+    window.addEventListener('wheel', close, true);
+    window.addEventListener('blur', close);
+    return () => {
+      window.removeEventListener('pointerdown', close, true);
+      window.removeEventListener('keydown', close, true);
+      window.removeEventListener('wheel', close, true);
+      window.removeEventListener('blur', close);
+    };
+  }, [menu]);
+  const flash = (text) => {
+    setNotice(text);
+    setTimeout(() => setNotice((t) => (t === text ? '' : t)), 5000);
+  };
+  async function reveal(asset) {
+    try {
+      await api.revealFile(asset.file);
+    } catch (e) {
+      flash(e.message);
+    }
+  }
   const fileInput = useRef(null);
   const lastProject = useRef(null);
   const onVersion = useCallback(
@@ -266,9 +298,10 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
   // Remoção com desfazer: guarda os cards e as ligações removidas para o Ctrl+Z.
   // Os arquivos continuam na pasta do ComfyUI; só o card sai do canvas.
   const undoStack = useRef([]);
-  async function deleteSelected() {
-    if (!project || !selectedIds.length) return;
-    const ids = new Set(selectedIds);
+  async function deleteSelected(only) {
+    const list = only || selectedIds;
+    if (!project || !list.length) return;
+    const ids = new Set(list);
     const assets = project.assets.filter((a) => ids.has(a.id));
     if (!assets.length) return;
     const edges = project.edges.filter((e) => ids.has(e.source) || ids.has(e.target));
@@ -336,6 +369,18 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
         onNodesChange={onNodesChange}
         onNodeDragStop={onNodeDragStop}
         onPaneClick={() => onSelect([])}
+        onNodeContextMenu={(e, node) => {
+          e.preventDefault();
+          // Botão direito num card fora da seleção: o menu vale só para ele.
+          if (!selectedIds.includes(node.id)) onSelect([node.id]);
+          const w = 220;
+          const h = 190;
+          setMenu({ x: Math.min(e.clientX, window.innerWidth - w - 8), y: Math.min(e.clientY, window.innerHeight - h - 8), asset: node.data.asset });
+        }}
+        onPaneContextMenu={(e) => {
+          e.preventDefault();
+          setMenu(null);
+        }}
         nodesConnectable={false}
         deleteKeyCode={null}
         minZoom={0.05}
@@ -387,7 +432,7 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
         <button className="dock-btn on" title="Selecionar (arraste para marcar vários)">
           <Icon name="pointer" size={16} />
         </button>
-        <button className="dock-btn" title="Remover selecionados (Delete) · Ctrl+Z desfaz" onClick={deleteSelected} disabled={!selectedIds.length}>
+        <button className="dock-btn" title="Remover selecionados (Delete) · Ctrl+Z desfaz" onClick={() => deleteSelected()} disabled={!selectedIds.length}>
           <Icon name="trash" size={16} />
         </button>
         {selectedIds.length > 0 && <span className="dock-count">{selectedIds.length} selecionado(s)</span>}
@@ -403,7 +448,41 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
           }}
         />
       </div>
-      <div className="canvas-hint">Arraste para selecionar · role para mover · Ctrl + rolar para zoom · duplo clique abre · Delete remove · Ctrl+Z desfaz</div>
+      {menu && (() => {
+        const a = menu.asset;
+        const many = selectedIds.length > 1 && selectedIds.includes(a.id);
+        const hasFile = Boolean(a.file) && a.status !== 'generating';
+        const run = (fn) => () => {
+          setMenu(null);
+          fn();
+        };
+        return (
+          <div className="card-menu" style={{ left: menu.x, top: menu.y }} onContextMenu={(e) => e.preventDefault()}>
+            <div className="card-menu-title">{a.title}</div>
+            <button onClick={run(() => onOpen(a))}>
+              <Icon name="eye" size={14} /> Abrir
+            </button>
+            {hasFile && (
+              <button onClick={run(() => downloadFile(a.file))}>
+                <Icon name="download" size={14} /> Baixar
+              </button>
+            )}
+            {hasFile && (
+              <button onClick={run(() => reveal(a))}>
+                <Icon name="folder" size={14} /> Mostrar na pasta
+              </button>
+            )}
+            <span className="card-menu-sep" />
+            <button className="danger" onClick={run(() => deleteSelected(many ? selectedIds : [a.id]))}>
+              <Icon name="trash" size={14} /> {many ? `Remover ${selectedIds.length} cards` : 'Remover do canvas'}
+              <kbd>Del</kbd>
+            </button>
+          </div>
+        );
+      })()}
+      {notice && <div className="canvas-notice">{notice}</div>}
+
+      <div className="canvas-hint">Arraste para selecionar · role para mover · Ctrl + rolar para zoom · duplo clique abre · botão direito: baixar e pasta · Delete remove · Ctrl+Z desfaz</div>
     </div>
   );
 }

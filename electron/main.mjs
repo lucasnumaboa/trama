@@ -1,5 +1,5 @@
 // App de desktop do Trama: sobe o servidor dentro do próprio processo e abre a interface numa janela.
-import { app, BrowserWindow, dialog, shell } from 'electron';
+import { app, BrowserWindow, Menu, Tray, dialog, nativeImage, shell } from 'electron';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -7,6 +7,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 let win = null;
+let tray = null;
+let quitting = false; // true só quando o usuário escolhe Sair (no ícone da bandeja)
+let trayHintShown = false;
 
 // Um erro solto do servidor (ex.: stream de arquivo interrompido) não deve abrir uma
 // janela de erro nem parar o app: vai para %APPDATA%\Trama\trama.log.
@@ -23,13 +26,41 @@ process.on('unhandledRejection', logError('unhandledRejection'));
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (!win) return;
-    if (win.isMinimized()) win.restore();
-    win.focus();
-  });
+  // Abrir o Trama de novo (atalho, menu Iniciar) mostra a janela que está na bandeja.
+  app.on('second-instance', showWindow);
+  app.on('before-quit', () => (quitting = true));
   app.whenReady().then(start);
   app.on('window-all-closed', () => app.quit());
+}
+
+function showWindow() {
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+// Fechar a janela só esconde: o Trama continua na bandeja (gerações em andamento
+// continuam). Para fechar de verdade: botão direito no ícone → Sair.
+function createTray() {
+  const icon = nativeImage.createFromPath(path.join(ROOT, 'public', 'favicon.ico'));
+  tray = new Tray(icon.isEmpty() ? nativeImage.createFromPath(path.join(ROOT, 'public', 'favicon.png')).resize({ width: 16, height: 16 }) : icon);
+  tray.setToolTip('Trama');
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Abrir o Trama', click: showWindow },
+      { type: 'separator' },
+      {
+        label: 'Sair',
+        click: () => {
+          quitting = true;
+          app.quit();
+        },
+      },
+    ]),
+  );
+  tray.on('click', showWindow);
+  tray.on('double-click', showWindow);
 }
 
 // Usa a 5190 como no modo de desenvolvimento; se estiver ocupada, a próxima livre.
@@ -93,7 +124,21 @@ async function start() {
       shell.openExternal(url);
     }
   });
+  win.on('close', (event) => {
+    if (quitting) return;
+    event.preventDefault();
+    win.hide();
+    if (!trayHintShown && tray) {
+      trayHintShown = true;
+      tray.displayBalloon({
+        iconType: 'info',
+        title: 'O Trama continua aberto',
+        content: 'Ele ficou aqui na bandeja. Para fechar, clique com o botão direito no ícone e escolha Sair.',
+      });
+    }
+  });
   win.on('closed', () => (win = null));
+  createTray();
 
   await win.loadURL(origin);
 }

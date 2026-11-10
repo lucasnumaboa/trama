@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, fileUrl } from './api.js';
+import { api, fileUrl, downloadFile } from './api.js';
 import { Icon, KIND_LABEL } from './ui.jsx';
 
 export function WorkflowsModal({ onClose }) {
@@ -61,6 +61,7 @@ export function WorkflowsModal({ onClose }) {
 
 export function PreviewModal({ asset, onClose, onSaveText, onVersion }) {
   const [text, setText] = useState(asset.text || '');
+  const [revealError, setRevealError] = useState('');
   const url = fileUrl(asset.file);
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -70,16 +71,25 @@ export function PreviewModal({ asset, onClose, onSaveText, onVersion }) {
             <Icon name={asset.kind} /> {asset.title}
           </h2>
           <div className="row">
-            {url && (
-              <a className="btn" href={url} target="_blank" rel="noreferrer" download>
-                Abrir arquivo
-              </a>
+            {url && asset.status !== 'generating' && (
+              <>
+                <button className="btn" onClick={() => downloadFile(asset.file)}>
+                  <Icon name="download" size={14} /> Baixar
+                </button>
+                <button
+                  className="btn"
+                  onClick={() => api.revealFile(asset.file).then(() => setRevealError(''), (e) => setRevealError(e.message))}
+                >
+                  <Icon name="folder" size={14} /> Mostrar na pasta
+                </button>
+              </>
             )}
             <button className="icon-btn" onClick={onClose}>
               <Icon name="close" />
             </button>
           </div>
         </div>
+        {revealError && <div className="msg-error">{revealError}</div>}
         <div className="preview-body">
           {asset.kind === 'image' && <img src={url} alt={asset.title} />}
           {asset.kind === 'video' && <video src={url} controls autoPlay />}

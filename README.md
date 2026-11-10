@@ -38,6 +38,7 @@ Everything runs locally: the agent talks to an LLM (DeepSeek, OpenAI-compatible 
 - **Model picker in the chat**: switch the model of any capability (image, video, audio) for the current project, and optionally make it the default for new projects.
 - **Agent with tools**: discover and read workflows, run them, revise a result with different parameters, edit media, write scripts/lyrics/plans as text cards, ask the user.
 - **Capabilities with default models** (Settings → Default models). Each category has a short list of models, each one bound to a ready-made ComfyUI workflow. You can add your own workflows to any category.
+- **Card menu**: right-click a card to open it, download the file, show it in its folder (when ComfyUI runs on the same PC) or remove it. Delete removes the selected cards and Ctrl+Z brings them back.
 - **Versions**: changing something ("make it vertical", "make the song 30 s") creates a new version of the same card. Switch versions with ‹ v2/3 › on the card.
 - **Cast of characters**: register each recurring character from its picture. The vision model writes a locked physical sheet: height and proportions, build, face, ears, hair, facial hair, glasses, outfit and props. Every generation that features a cast member attaches its picture as a reference and writes the sheet into the prompt, so characters keep the same body and look from scene to scene. Reference workflows can take more pictures than they expose: MiniMax H3 takes up to 9 references.
 - **Recipes**: every card remembers the workflow, values and inputs that made it, so the agent can redo only what changed.
@@ -122,7 +123,7 @@ node tools/test_workflows.mjs              # also runs the fast ones for real
 
 ### Building the installer
 
-`build-installer.bat` (or `npm run dist`) builds a Windows installer, `installer/output/Trama-Setup-<version>.exe`, with Electron and electron-builder. Run the exe to install Trama for the current user. It adds Start menu and desktop shortcuts and opens Trama in its own window, with no browser or console window.
+`build-installer.bat` (or `npm run dist`) builds a Windows installer, `installer/output/Trama-Setup-<version>.exe`, with Electron and electron-builder. Run the exe to install Trama for the current user. It adds Start menu and desktop shortcuts and opens Trama in its own window, with no browser or console window. Closing the window keeps Trama running in the system tray, so generations keep going. Click the tray icon to open it again, or right-click it and choose Sair to quit.
 
 The installed app bundles its own runtime, so Node.js is not needed on that machine. ComfyUI must be running, and ffmpeg must be on the PATH for video and audio tools. Settings, the API key and projects are stored in `%APPDATA%\Trama\data`, never inside the installer, and uninstalling keeps them. The app uses port 5190, or the next free port if 5190 is taken. `npm run app` opens the same desktop window without installing.
 

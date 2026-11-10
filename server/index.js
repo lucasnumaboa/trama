@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable, pipeline } from 'node:stream';
+import { spawn } from 'node:child_process';
 import * as comfy from './comfy.js';
 import { describeByName } from './exec.js';
 import { listModels } from './deepseek.js';
@@ -85,11 +86,31 @@ app.get('/api/comfy/view', wrap(async (req, res) => {
     if (v) res.setHeader(h, v);
   }
   res.setHeader('Cache-Control', 'private, max-age=86400');
+  // ?download=1: baixa como arquivo (no app de desktop, abre "Salvar como").
+  if (req.query.download) {
+    const name = path.basename(String(req.query.filename || 'arquivo'));
+    res.setHeader('Content-Disposition', `attachment; filename="${name.replace(/[^ -~]|"/g, '_')}"; filename*=UTF-8''${encodeURIComponent(name)}`);
+  }
   // pipeline trata erro no meio do stream (ComfyUI caiu, navegador fechou a conexão)
   // em vez de deixar virar uma exceção não tratada que derruba o servidor.
   pipeline(Readable.fromWeb(upstream.body), res, (error) => {
     if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') console.error('[GET /api/comfy/view]', error.message);
   });
+}));
+
+// Abre a pasta do arquivo no Explorer com ele selecionado (só se o ComfyUI roda neste PC).
+app.post('/api/comfy/reveal', wrap(async (req, res) => {
+  const full = await comfy.localPathOf({
+    filename: String(req.body?.filename || ''),
+    subfolder: String(req.body?.subfolder || ''),
+    type: String(req.body?.type || 'output'),
+  });
+  if (process.platform === 'win32') {
+    spawn('explorer.exe', [`/select,"${full}"`], { windowsVerbatimArguments: true, detached: true, stdio: 'ignore' }).unref();
+  } else {
+    spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', process.platform === 'darwin' ? ['-R', full] : [path.dirname(full)], { detached: true, stdio: 'ignore' }).unref();
+  }
+  res.json({ ok: true, path: full });
 }));
 
 // ---- Projetos ----
