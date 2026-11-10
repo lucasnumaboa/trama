@@ -55,8 +55,8 @@ function randomSeed(field) {
  * @param {object} opts.media         { slotId ("media:N"): arquivo {filename, subfolder, type} }
  * @returns {{ files: Array, seeds: object, desc: object }}
  */
-export async function runWorkflow({ name, values = {}, media = {}, onProgress = () => {}, signal }) {
-  const { desc, prompt, seeds } = await buildPrompt({ name, values, media });
+export async function runWorkflow({ name, values = {}, media = {}, extraRefs = [], onProgress = () => {}, signal }) {
+  const { desc, prompt, seeds } = await buildPrompt({ name, values, media, extraRefs });
 
   const history = await comfy.runPrompt(prompt, {
     signal,
@@ -69,8 +69,12 @@ export async function runWorkflow({ name, values = {}, media = {}, onProgress = 
   return collectFiles(history, desc, prompt, seeds);
 }
 
-/** Monta o prompt de API com valores e mídias aplicados (sem enviar). */
-export async function buildPrompt({ name, values = {}, media = {} }) {
+/**
+ * Monta o prompt de API com valores e mídias aplicados (sem enviar).
+ * extraRefs: imagens acrescentadas depois das referências que o workflow já tem
+ * (nós com lista crescente de imagens, ex.: MiniMax H3 aceita até 9).
+ */
+export async function buildPrompt({ name, values = {}, media = {}, extraRefs = [] }) {
   const desc = await describeByName(name);
   const prompt = structuredClone(desc.prompt);
   const seeds = {};
@@ -94,6 +98,18 @@ export async function buildPrompt({ name, values = {}, media = {} }) {
     const slot = desc.mediaInputs.find((m) => m.id === slotId);
     if (!slot) throw new Error(`O workflow "${name}" não tem a entrada "${slotId}". Entradas: ${desc.mediaInputs.map((m) => m.id).join(', ') || 'nenhuma'}`);
     prompt[slot.nodeId].inputs[slot.input] = await asComfyInput(file);
+  }
+  if (extraRefs.length) {
+    const g = desc.references?.grow;
+    if (!g || extraRefs.length > g.extra) {
+      throw new Error(`O workflow "${name}" aceita ${desc.references?.maxImages ?? desc.mediaInputs.length} imagens de referência; foram pedidas ${desc.mediaInputs.filter((m) => m.kind === 'image').length + extraRefs.length}.`);
+    }
+    let nextId = Math.max(0, ...Object.keys(prompt).map(Number).filter(Number.isFinite)) + 1;
+    for (const [i, file] of extraRefs.entries()) {
+      const id = String(nextId++);
+      prompt[id] = { class_type: 'LoadImage', inputs: { image: await asComfyInput(file) }, _meta: { title: `Referência extra ${i + 1}` } };
+      prompt[g.nodeId].inputs[`${g.keyPrefix}${g.nextIndex + i}`] = [id, 0];
+    }
   }
   return { desc, prompt, seeds };
 }

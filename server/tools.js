@@ -3,7 +3,8 @@
 import * as comfy from './comfy.js';
 import { describeByName, runWorkflow } from './exec.js';
 import { editMedia, mediaInfo, OPERATIONS, SINGLE_INPUT_OPS, NoChange } from './media.js';
-import { describeImage } from './vision.js';
+import { describeImage, describeCharacter } from './vision.js';
+import { castOf, findCharacter, upsertCharacter, removeCharacter, mentionedCharacters, placeCharacters } from './cast.js';
 import {
   addAsset, updateAsset, saveProject, describeAsset, addEdge, emit, placeBelow, addVersion, selectVersion, removeAsset,
 } from './projects.js';
@@ -46,6 +47,11 @@ export const TOOL_SCHEMAS = [
           additionalProperties: { type: 'string' },
         },
         allow_default_inputs: { type: 'boolean', description: 'Só true se o usuário pediu para usar os arquivos de exemplo do workflow nos slots vazios.' },
+        characters: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Nomes do elenco (define_character) que aparecem nesta geração. O Trama põe a foto de cada um nas referências do workflow (slots livres e referências extras) e escreve a ficha física no prompt. No prompt, cite cada um como @Nome e descreva só ação, pose, expressão e câmera.',
+        },
       },
       required: ['name'],
     },
@@ -60,6 +66,7 @@ export const TOOL_SCHEMAS = [
         asset_id: { type: 'string' },
         values: { type: 'object', description: 'Campos a mudar (ids do get_workflow da receita). O resto fica como na versão atual.', additionalProperties: true },
         inputs: { type: 'object', description: 'Trocar mídias de entrada: slot -> asset_id', additionalProperties: { type: 'string' } },
+        characters: { type: 'array', items: { type: 'string' }, description: 'Trocar os personagens do elenco da cena (sem isso, os mesmos da receita).' },
         note: { type: 'string', description: 'O que mudou nesta versão, em poucas palavras (ex.: "30 s em vez de 60")' },
       },
       required: ['asset_id'],
@@ -101,6 +108,26 @@ Nas operações de um arquivo só, o resultado vira uma NOVA VERSÃO do mesmo ca
       },
       required: ['operation', 'asset_ids'],
     },
+  },
+  {
+    name: 'define_character',
+    description:
+      'Registra (ou atualiza, pelo nome) um personagem fixo do projeto a partir da foto dele. O modelo de visão escreve uma ficha física travada (altura e proporções, corpo, rosto, orelhas, cabelo, barba, óculos, roupa, objetos). Depois, passe o nome em characters em toda geração em que ele aparece. Registre cada personagem uma vez, antes de escrever as cenas. Confira a ficha devolvida: se algo estiver errado ou faltando (ex.: o usuário diz que ele é baixinho), registre de novo com notes.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Nome curto e único, sem espaços de preferência (ex.: "Kenji")' },
+        asset_id: { type: 'string', description: 'Card da imagem do personagem' },
+        focus: { type: 'string', description: 'Qual pessoa da imagem, se tiver mais de uma (em inglês, ex.: "the man with the pipe")' },
+        notes: { type: 'string', description: 'Fatos físicos que valem mais que a visão, em inglês (ex.: "very short, about 1.2 m tall, pointed ears")' },
+      },
+      required: ['name', 'asset_id'],
+    },
+  },
+  {
+    name: 'remove_character',
+    description: 'Tira um personagem do elenco do projeto.',
+    parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
   },
   {
     name: 'look_at',
@@ -304,7 +331,7 @@ const findAsset = (p, id) => {
 };
 
 // ---- Geração (nova ou como versão) -------------------------------------------
-async function generate(ctx, { name, values = {}, inputs = {}, allowDefault = false, title, reviseId, note }) {
+async function generate(ctx, { name, values = {}, inputs = {}, characters = [], allowDefault = false, title, reviseId, note }) {
   const p = ctx.project;
   const d = await describeByName(name);
   const media = {};
@@ -319,10 +346,6 @@ async function generate(ctx, { name, values = {}, inputs = {}, allowDefault = fa
     }
     media[slot] = a.file;
     inputIds.push(a.id);
-  }
-  const missing = d.mediaInputs.filter((m) => !media[m.id]);
-  if (missing.length && !allowDefault) {
-    throw new Error(`Faltam entradas: ${missing.map((m) => `${m.id} (${KIND_PT[m.kind]}: "${m.title}")`).join(', ')}. Passe assets do projeto, ou peça ao usuário. Se este workflow não combina com o pedido, use outro.`);
   }
   // Campo de texto pode receber o id de um card de texto.
   const resolved = { ...values };
@@ -341,9 +364,36 @@ async function generate(ctx, { name, values = {}, inputs = {}, allowDefault = fa
   if (pf && !allowDefault && !String(resolved[pf.id] ?? '').trim()) {
     throw new Error(`Falta a instrução: passe o texto em values["${pf.id}"] (${pf.nodeTitle}). Sem ele o workflow usa o exemplo do template "${clip(String(pf.default || ''), 60)}".`);
   }
+
+  // Elenco: a foto de cada personagem vira referência e a ficha dele entra no prompt.
+  let extraRefs = [];
+  const cast = (characters || []).map((n) => {
+    const c = findCharacter(p, n);
+    if (!c) throw new Error(`"${n}" não está no elenco. Elenco: ${castOf(p).map((x) => x.name).join(', ') || 'vazio'}. Registre com define_character.`);
+    return { ...c, asset: findAsset(p, c.assetId) };
+  });
+  if (cast.length) {
+    if (!pf) throw new Error(`O workflow ${d.name} não tem campo de prompt para descrever os personagens.`);
+    const placed = placeCharacters(d, inputs, cast, resolved[pf.id]);
+    for (const [slot, a] of Object.entries(placed.slots)) media[slot] = a.file;
+    extraRefs = placed.extra.map((a) => a.file);
+    resolved[pf.id] = placed.prompt;
+    for (const c of cast) inputIds.push(c.asset.id);
+  } else if (pf && castOf(p).length) {
+    // Personagem do elenco citado sem characters: sairia só pelo texto e mudaria de cara.
+    const cited = mentionedCharacters(p, String(resolved[pf.id] ?? ''));
+    if (cited.length) {
+      throw new Error(`O prompt cita ${cited.map((c) => c.name).join(', ')}, do elenco. Passe characters: [${cited.map((c) => `"${c.name}"`).join(', ')}] para o Trama usar a foto e a ficha de cada um.`);
+    }
+  }
+
+  const missing = d.mediaInputs.filter((m) => !media[m.id]);
+  if (missing.length && !allowDefault) {
+    throw new Error(`Faltam entradas: ${missing.map((m) => `${m.id} (${KIND_PT[m.kind]}: "${m.title}")`).join(', ')}. Passe assets do projeto, ou peça ao usuário. Se este workflow não combina com o pedido, use outro.`);
+  }
   const mainText = (pf && resolved[pf.id]) || d.fields.filter((f) => f.kind === 'text' && !f.internal).map((f) => resolved[f.id] ?? f.default).find((t) => t && String(t).trim());
   const kind = d.outputs[0]?.kind || 'image';
-  const recipe = { tool: 'run_workflow', workflow: d.name, values, inputs, ...(allowDefault ? { allow_default_inputs: true } : {}) };
+  const recipe = { tool: 'run_workflow', workflow: d.name, values, inputs, ...(cast.length ? { characters: cast.map((c) => c.name) } : {}), ...(allowDefault ? { allow_default_inputs: true } : {}) };
 
   let target;
   let previous;
@@ -364,6 +414,7 @@ async function generate(ctx, { name, values = {}, inputs = {}, allowDefault = fa
       name: d.name,
       values: resolved,
       media,
+      extraRefs,
       signal: ctx.signal,
       onProgress: ({ progress, detail }) => {
         const now = Date.now();
@@ -539,7 +590,7 @@ export async function runTool(name, args, ctx) {
     }
 
     case 'run_workflow':
-      return generate(ctx, { name: args.name, values: args.values, inputs: args.inputs, allowDefault: args.allow_default_inputs, title: args.title });
+      return generate(ctx, { name: args.name, values: args.values, inputs: args.inputs, characters: args.characters, allowDefault: args.allow_default_inputs, title: args.title });
 
     case 'revise_asset': {
       const a = findAsset(p, args.asset_id);
@@ -554,6 +605,7 @@ export async function runTool(name, args, ctx) {
         name: r.workflow,
         values: { ...(r.values || {}), ...(args.values || {}) },
         inputs: { ...(r.inputs || {}), ...(args.inputs || {}) },
+        characters: args.characters || r.characters || [],
         allowDefault: r.allow_default_inputs,
         reviseId: a.id,
         note: args.note,
@@ -562,6 +614,29 @@ export async function runTool(name, args, ctx) {
 
     case 'edit_media':
       return edit(ctx, args);
+
+    case 'define_character': {
+      const a = findAsset(p, args.asset_id);
+      if (a.kind !== 'image' || !a.file) throw new Error('O personagem precisa de um card de imagem.');
+      const name = String(args.name || '').replace(/^@/, '').trim();
+      if (!name) throw new Error('Dê um nome ao personagem.');
+      ctx.step({ label: `Lendo o físico de "${name}"`, assetIds: [a.id] });
+      const { sheet, brief } = await describeCharacter(a, { focus: args.focus, signal: ctx.signal });
+      const c = upsertCharacter(p, { name, assetId: a.id, sheet, brief, notes: args.notes });
+      saveProject(p);
+      return {
+        label: `Registrou o personagem ${c.name}`,
+        assetIds: [a.id],
+        result: { ok: true, character: { name: c.name, asset_id: a.id, brief: c.brief, sheet: c.sheet }, cast: castOf(p).map((x) => x.name) },
+      };
+    }
+
+    case 'remove_character': {
+      const c = removeCharacter(p, args.name);
+      if (!c) throw new Error(`"${args.name}" não está no elenco.`);
+      saveProject(p);
+      return { label: `Tirou ${c.name} do elenco`, result: { ok: true, cast: castOf(p).map((x) => x.name) } };
+    }
 
     case 'look_at': {
       const a = findAsset(p, args.asset_id);

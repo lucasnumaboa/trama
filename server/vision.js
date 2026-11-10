@@ -12,11 +12,29 @@ const VISION_MODELS = [
 ];
 
 const ASK = `Describe this image for a film director who must keep continuity in new scenes.
-1. People: for EACH person, from left to right: position in frame, which side of any counter or stall they stand on (behind it = serving, in front = customer), gender, approximate age, build, skin tone, hair (color, length, cut), facial hair, clothing (colors, type), accessories, expression, exactly what each hand is doing or holding, and their likely role.
+1. People: for EACH person, from left to right: position in frame, which side of any counter or stall they stand on (behind it = serving, in front = customer), gender, approximate age, height and body proportions compared with an average adult (e.g. very short with a large head, child-sized, tall, giant), build (slim, average, stocky, heavy, obese, muscular), skin tone, hair (color, length, cut), facial hair, glasses (shape), unusual features (pointed ears, scars, eyepatch, tattoos), clothing (colors, type), accessories, expression, exactly what each hand is doing or holding, and their likely role.
 2. Setting: place, objects, colors, signs or text.
 3. Light and time of day.
 4. Camera: shot size, angle, orientation (vertical/horizontal).
 Be factual and specific. No names, no guesses beyond what is visible. Plain text, no JSON, under 250 words.`;
+
+// Ficha de personagem: só o físico e a roupa, para repetir o mesmo personagem em
+// cenas novas. A última linha (BRIEF) é a versão curta que entra nos prompts.
+const CHARACTER_ASK = (focus) => `You are writing a character model sheet so an animator can draw this exact character again in new scenes.
+Describe ONLY the main character${focus ? ` (${focus})` : ''}, ignore the background and other people.
+Answer each line, factual and specific, judging proportions against an average adult human:
+HEIGHT & PROPORTIONS: overall height impression (very short / dwarf-like / child-sized / average / tall / giant), head-to-body ratio, leg and arm length.
+BODY: build and weight (slim, average, stocky, heavy, obese, very muscular), shoulders, belly.
+FACE: apparent age, face shape, skin tone, eyes, eyebrows, nose, mouth, typical expression.
+EARS & MARKS: ear shape (normal or pointed), scars, eyepatch, moles, tattoos.
+HAIR: color, length, texture (straight, wavy, curly), style (topknot, buzz cut, etc.).
+FACIAL HAIR: none, stubble, mustache, goatee, beard — shape and color.
+GLASSES: none, or frame shape, thickness and color.
+OUTFIT: each garment from top to bottom with colors, material and condition (torn, patched), footwear.
+PROPS: objects the character carries or wears (weapons, pipe, bag, basket, chain).
+MUST KEEP: the 4 traits that make this character recognizable.
+BRIEF: one line, at most 45 words, with height/proportions, build, face, hair, facial hair, glasses and outfit.
+Plain text, these labels only, no extra commentary.`;
 
 let chosen;
 async function visionModel() {
@@ -44,7 +62,35 @@ function cleanText(raw) {
  * Descreve uma imagem (asset). Devolve o texto ou lança erro.
  * @param {{ file: {filename, subfolder, type} }} asset
  */
-export async function describeImage(asset, { signal } = {}) {
+export const describeImage = (asset, opts) => ask(asset, ASK, opts);
+
+/**
+ * Ficha física de um personagem. Devolve { sheet, brief }.
+ * focus: qual pessoa da imagem, quando houver mais de uma (ex.: "the man with the pipe").
+ */
+export async function describeCharacter(asset, { focus, signal } = {}) {
+  const sheet = await ask(asset, CHARACTER_ASK(focus), { signal });
+  // O BRIEF às vezes deixa de fora um traço marcante (ex.: orelhas pontudas) que está
+  // em MUST KEEP: os dois entram no prompt.
+  const keep = String(sheet).match(/^\s*\**MUST KEEP\s*:?\**\s*:?\s*(.+)$/im)?.[1]?.trim().replace(/[.\s]+$/, '');
+  const brief = parseBrief(sheet).replace(/[.\s]+$/, '');
+  return { sheet, brief: keep ? `${brief}. Must keep: ${keep}` : brief };
+}
+
+/** A linha BRIEF da ficha; sem ela, um resumo das primeiras linhas. */
+export function parseBrief(sheet) {
+  const m = String(sheet).match(/^\s*\**BRIEF\s*:?\**\s*:?\s*(.+)$/im);
+  if (m) return m[1].trim().replace(/\*+$/, '');
+  return String(sheet)
+    .split('\n')
+    .map((l) => l.replace(/^[A-Z &]+:\s*/, '').trim())
+    .filter(Boolean)
+    .slice(0, 4)
+    .join('; ')
+    .slice(0, 320);
+}
+
+async function ask(asset, question, { signal } = {}) {
   const model = await visionModel();
   if (!model) throw new Error('Não há modelo de visão instalado no ComfyUI (TextGenerate + Qwen-VL).');
   const image = await asComfyInput(asset.file);
@@ -53,7 +99,7 @@ export async function describeImage(asset, { signal } = {}) {
     2: { class_type: 'CLIPLoader', inputs: { clip_name: model[0], type: model[1], device: 'default' } },
     3: {
       class_type: 'TextGenerate',
-      inputs: { clip: ['2', 0], prompt: ASK, image: ['1', 0], max_length: 900, sampling_mode: 'off', thinking: false, use_default_template: true },
+      inputs: { clip: ['2', 0], prompt: question, image: ['1', 0], max_length: 900, sampling_mode: 'off', thinking: false, use_default_template: true },
     },
     4: { class_type: 'PreviewAny', inputs: { source: ['3', 0] } },
   };

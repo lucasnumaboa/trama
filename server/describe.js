@@ -142,6 +142,8 @@ export function describeWorkflow(name, workflow, objectInfo) {
     fields.splice(Math.min(index, fields.length), 0, merged);
   }
 
+  const references = referenceInfo(prompt, objectInfo, mediaInputs, notes);
+
   return {
     name,
     title: name.replace(/\.json$/i, '').replace(/_/g, ' '),
@@ -150,5 +152,56 @@ export function describeWorkflow(name, workflow, objectInfo) {
     mediaInputs,
     outputs,
     notes,
+    references,
   };
 }
+
+/**
+ * Referências de imagem citáveis no prompt (<Picture 1>, <image1>…).
+ * - Cada slot de imagem ganha o número com que é citado (refNumber).
+ * - Se um nó tem uma lista crescente de imagens (COMFY_AUTOGROW, ex.: MiniMax H3 aceita
+ *   até 9) alimentada direto pelos slots do workflow, dá para acrescentar referências
+ *   além das que o workflow já tem: `grow` diz onde e até quantas.
+ */
+export function referenceInfo(prompt, objectInfo, mediaInputs, notes = []) {
+  const text = notes.join('\n');
+  const tagStyle = /<image\s*1>/i.test(text) ? 'image' : 'picture';
+  const imageSlots = mediaInputs.filter((m) => m.kind === 'image');
+  const slotByNode = new Map(imageSlots.map((m) => [m.nodeId, m]));
+
+  // Grupos crescentes de IMAGE em nós usados, com as entradas já ligadas a slots.
+  const groups = [];
+  for (const [id, node] of Object.entries(prompt)) {
+    const optional = objectInfo[node.class_type]?.input?.optional || {};
+    for (const [group, spec] of Object.entries(optional)) {
+      if (spec?.[0] !== 'COMFY_AUTOGROW_V3') continue;
+      const template = spec[1]?.template;
+      const inner = Object.values(template?.input?.required || {});
+      if (inner.length !== 1 || inner[0][0] !== 'IMAGE') continue;
+      const prefix = template.prefix;
+      const linked = [];
+      for (const [key, v] of Object.entries(node.inputs)) {
+        const m = key.match(new RegExp(`^${group}\\.${prefix}(\\d+)$`));
+        if (m && Array.isArray(v)) linked.push({ index: Number(m[1]), key, slot: slotByNode.get(String(v[0])) });
+      }
+      if (!linked.length || !linked.every((l) => l.slot)) continue;
+      linked.sort((a, b) => a.index - b.index);
+      groups.push({ nodeId: id, group, prefix, max: template.max ?? linked.length, linked });
+    }
+  }
+
+  // Numeração: a ordem no grupo (ref_image_0 → 1); sem grupo, a ordem dos slots.
+  const numbers = new Map();
+  if (groups.length === 1) groups[0].linked.forEach((l, i) => numbers.set(l.slot.id, i + 1));
+  else imageSlots.forEach((m, i) => numbers.set(m.id, i + 1));
+  for (const m of imageSlots) m.refNumber = numbers.get(m.id);
+
+  const g = groups.length === 1 ? groups[0] : null;
+  const grow = g && g.max > g.linked.length
+    ? { nodeId: g.nodeId, keyPrefix: `${g.group}.${g.prefix}`, nextIndex: g.linked[g.linked.length - 1].index + 1, linkedCount: g.linked.length, extra: g.max - g.linked.length }
+    : null;
+  return { tagStyle, maxImages: imageSlots.length + (grow?.extra || 0), grow };
+}
+
+/** Como citar a referência n no prompt deste workflow. */
+export const refTag = (style, n) => (style === 'image' ? `<image${n}>` : `<Picture ${n}>`);
