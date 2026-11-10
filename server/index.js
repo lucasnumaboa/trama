@@ -156,6 +156,12 @@ app.patch('/api/projects/:id/assets/:assetId', wrap((req, res) => {
   if (!a) return res.status(404).json({ error: 'Asset não encontrado' });
   res.json(a);
 }));
+app.post('/api/projects/:id/assets/restore', wrap((req, res) => {
+  const p = projects.getProject(req.params.id);
+  const restored = projects.restoreAssets(p, req.body?.assets, req.body?.edges);
+  projects.saveProject(p);
+  res.json({ restored });
+}));
 app.delete('/api/projects/:id/assets/:assetId', wrap((req, res) => {
   const p = projects.getProject(req.params.id);
   projects.removeAsset(p, req.params.assetId);

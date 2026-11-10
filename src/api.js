@@ -38,6 +38,7 @@ export const api = {
     }),
   updateAsset: (id, assetId, patch) => call(`/api/projects/${id}/assets/${assetId}`, json('PATCH', patch)),
   deleteAsset: (id, assetId) => call(`/api/projects/${id}/assets/${assetId}`, { method: 'DELETE' }),
+  restoreAssets: (id, assets, edges) => call(`/api/projects/${id}/assets/restore`, json('POST', { assets, edges })),
 };
 
 export const fileUrl = (f) =>

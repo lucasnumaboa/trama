@@ -27,19 +27,64 @@ function VersionSwitch({ asset, onVersion }) {
 
 const fmtDuration = (s) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}` : '');
 
-/** Vídeo com selo de duração; os controles aparecem ao passar o mouse. */
+/**
+ * Vídeo com selo de duração. Toca sem som ao passar o mouse; o botão liga o som.
+ * Sem os controles nativos no card: eles capturavam o clique e o card não arrastava.
+ * O player completo abre no duplo clique.
+ */
 function VideoBody({ url }) {
+  const ref = useRef(null);
   const [duration, setDuration] = useState(null);
   const [hover, setHover] = useState(false);
+  const [muted, setMuted] = useState(true);
+  const [time, setTime] = useState(0);
+  const enter = () => {
+    setHover(true);
+    ref.current?.play().catch(() => {});
+  };
+  const leave = () => {
+    setHover(false);
+    const v = ref.current;
+    if (v) {
+      v.pause();
+      v.currentTime = 0.1;
+    }
+  };
   return (
-    <div className="video-wrap" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
-      <video src={`${url}#t=0.1`} controls={hover} muted loop preload="metadata" className="nodrag" onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)} />
-      {!hover && duration && <span className="dur-badge">{fmtDuration(duration)}</span>}
-      {!hover && (
+    <div className="video-wrap" onMouseEnter={enter} onMouseLeave={leave}>
+      <video
+        ref={ref}
+        src={`${url}#t=0.1`}
+        muted={muted}
+        loop
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+        onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+      />
+      {duration && <span className="dur-badge">{fmtDuration(hover ? Math.max(0, duration - time) : duration)}</span>}
+      {hover ? (
+        <button
+          className="sound-btn nodrag"
+          title={muted ? 'Ligar o som' : 'Desligar o som'}
+          onClick={(e) => {
+            e.stopPropagation();
+            setMuted((m) => !m);
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          <Icon name={muted ? 'mute' : 'volume'} size={13} />
+        </button>
+      ) : (
         <span className="play-badge">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
             <path d="M8 5v14l11-7z" />
           </svg>
+        </span>
+      )}
+      {hover && duration > 0 && (
+        <span className="video-progress">
+          <span style={{ width: `${Math.min(100, (time / duration) * 100)}%` }} />
         </span>
       )}
     </div>
@@ -218,12 +263,54 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
     }
   }
 
+  // Remoção com desfazer: guarda os cards e as ligações removidas para o Ctrl+Z.
+  // Os arquivos continuam na pasta do ComfyUI; só o card sai do canvas.
+  const undoStack = useRef([]);
   async function deleteSelected() {
-    if (!selectedIds.length) return;
-    if (!confirm(`Remover ${selectedIds.length} card(s) do canvas? Os arquivos continuam na pasta do ComfyUI.`)) return;
-    for (const id of selectedIds) await api.deleteAsset(project.id, id).catch(() => {});
+    if (!project || !selectedIds.length) return;
+    const ids = new Set(selectedIds);
+    const assets = project.assets.filter((a) => ids.has(a.id));
+    if (!assets.length) return;
+    const edges = project.edges.filter((e) => ids.has(e.source) || ids.has(e.target));
+    undoStack.current.push({ projectId: project.id, assets, edges });
+    if (undoStack.current.length > 50) undoStack.current.shift();
     onSelect([]);
+    await Promise.all(assets.map((a) => api.deleteAsset(project.id, a.id).catch(() => {})));
   }
+
+  async function undoDelete() {
+    const stack = undoStack.current;
+    for (let i = stack.length - 1; i >= 0; i--) {
+      if (stack[i].projectId !== project?.id) continue;
+      const [entry] = stack.splice(i, 1);
+      await api.restoreAssets(project.id, entry.assets, entry.edges).catch((e) => alert(`Não consegui desfazer: ${e.message}`));
+      onSelect(entry.assets.map((a) => a.id));
+      return true;
+    }
+    return false;
+  }
+
+  // Delete/Backspace remove os cards selecionados; Ctrl+Z traz de volta.
+  // Fora do canvas (digitando no chat, numa janela aberta) as teclas seguem normais.
+  const keyActions = useRef({});
+  keyActions.current = { deleteSelected, undoDelete, hasSelection: selectedIds.length > 0 };
+  useEffect(() => {
+    const onKey = (e) => {
+      const t = e.target;
+      if (t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (document.querySelector('.modal-backdrop')) return;
+      const { deleteSelected, undoDelete, hasSelection } = keyActions.current;
+      if ((e.key === 'Delete' || e.key === 'Backspace') && hasSelection && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        deleteSelected();
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        undoDelete();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   return (
     <div
@@ -300,7 +387,7 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
         <button className="dock-btn on" title="Selecionar (arraste para marcar vários)">
           <Icon name="pointer" size={16} />
         </button>
-        <button className="dock-btn" title="Remover selecionados" onClick={deleteSelected} disabled={!selectedIds.length}>
+        <button className="dock-btn" title="Remover selecionados (Delete) · Ctrl+Z desfaz" onClick={deleteSelected} disabled={!selectedIds.length}>
           <Icon name="trash" size={16} />
         </button>
         {selectedIds.length > 0 && <span className="dock-count">{selectedIds.length} selecionado(s)</span>}
@@ -316,7 +403,7 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
           }}
         />
       </div>
-      <div className="canvas-hint">Arraste para selecionar · role para mover · Ctrl + rolar para zoom · duplo clique abre</div>
+      <div className="canvas-hint">Arraste para selecionar · role para mover · Ctrl + rolar para zoom · duplo clique abre · Delete remove · Ctrl+Z desfaz</div>
     </div>
   );
 }

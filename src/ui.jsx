@@ -5,6 +5,8 @@ const PATHS = {
   image: 'M4 5h16v14H4z M4 16l5-5 4 4 3-3 4 4 M15 9.5a1.5 1.5 0 1 0 0-.01',
   video: 'M4 6h12v12H4z M16 10l4-2v8l-4-2',
   audio: 'M9 18V6l10-2v12 M9 18a2 2 0 1 1-4 0 2 2 0 0 1 4 0z M19 16a2 2 0 1 1-4 0 2 2 0 0 1 4 0z',
+  volume: 'M11 5 6 9H2v6h4l5 4V5z M15.5 8.5a5 5 0 0 1 0 7 M19 5a10 10 0 0 1 0 14',
+  mute: 'M11 5 6 9H2v6h4l5 4V5z M22 9l-6 6 M16 9l6 6',
   text: 'M6 4h9l3 3v13H6z M9 10h6 M9 14h6 M9 18h4',
   file: 'M6 4h9l3 3v13H6z',
   plus: 'M12 5v14 M5 12h14',

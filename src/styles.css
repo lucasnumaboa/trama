@@ -147,6 +147,10 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 .card-body img, .card-body video { display: block; width: 100%; max-height: 380px; object-fit: contain; background: #000; }
 .video-wrap { position: relative; }
 .dur-badge { position: absolute; right: 8px; bottom: 8px; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; background: rgba(0, 0, 0, 0.65); color: #fff; font-variant-numeric: tabular-nums; pointer-events: none; }
+.sound-btn { position: absolute; left: 8px; bottom: 10px; width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 50%; background: rgba(0, 0, 0, 0.65); color: #fff; cursor: pointer; }
+.sound-btn:hover { background: rgba(0, 0, 0, 0.85); }
+.video-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255, 255, 255, 0.15); pointer-events: none; }
+.video-progress > span { display: block; height: 100%; background: var(--grad); }
 .play-badge { position: absolute; left: 8px; bottom: 8px; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: rgba(0, 0, 0, 0.6); color: #fff; pointer-events: none; }
 .card-text { padding: 12px 14px; max-height: 280px; overflow: auto; white-space: pre-wrap; font-size: 12px; line-height: 1.6; color: var(--text-2); background: var(--panel); cursor: text; user-select: text; }
 .card-audio { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 20px 12px 14px; color: var(--k-audio); background: radial-gradient(120% 100% at 50% 0%, rgba(60, 207, 142, 0.1), transparent 60%), var(--panel); }

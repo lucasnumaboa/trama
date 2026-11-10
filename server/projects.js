@@ -143,6 +143,35 @@ export function removeAsset(p, id) {
   emit(p.id, { type: 'asset-removed', id });
 }
 
+/**
+ * Desfazer uma remoção (Ctrl+Z no canvas): devolve os cards com os mesmos ids e
+ * as ligações cujas duas pontas existem de novo. Ids que já existem são ignorados.
+ */
+export function restoreAssets(p, assets = [], edges = []) {
+  const restored = [];
+  for (const raw of assets) {
+    if (!raw || typeof raw.id !== 'string' || !/^asset_\w+$/.test(raw.id)) continue;
+    if (p.assets.some((a) => a.id === raw.id)) continue;
+    const a = { ...raw };
+    // Um card que estava gerando quando foi removido não volta a gerar.
+    if (a.status === 'generating') Object.assign(a, a.file ? { status: 'ready' } : { status: 'error', error: 'Geração interrompida' });
+    delete a.progress;
+    delete a.detail;
+    p.assets.push(a);
+    emit(p.id, { type: 'asset', asset: a });
+    restored.push(a.id);
+  }
+  for (const e of edges) {
+    if (!e || typeof e.source !== 'string' || typeof e.target !== 'string') continue;
+    if (!p.assets.some((a) => a.id === e.source) || !p.assets.some((a) => a.id === e.target)) continue;
+    if (p.edges.some((x) => x.source === e.source && x.target === e.target)) continue;
+    const edge = { id: typeof e.id === 'string' ? e.id : shortId('edge'), source: e.source, target: e.target };
+    p.edges.push(edge);
+    emit(p.id, { type: 'edge', edge });
+  }
+  return restored;
+}
+
 export function addEdge(p, source, target) {
   if (source === target || !p.assets.some((a) => a.id === source)) return;
   if (p.edges.some((e) => e.source === source && e.target === target)) return;
