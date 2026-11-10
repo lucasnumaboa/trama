@@ -341,6 +341,35 @@ async function inspectAll(assets, opts) {
 // outra edição do mesmo tipo.
 const DERIVATIVE_OPS = new Set(['reformat', 'resize', 'crop_borders', 'compress']);
 
+// O agente às vezes abrevia o slot ("media", "137", o título do nó). Resolve para o
+// id certo quando não há dúvida; senão o erro de slot inexistente lista os válidos.
+export function resolveSlots(p, d, inputs = {}) {
+  const valid = (k) => d.mediaInputs.some((m) => m.id === k);
+  const used = new Set(Object.keys(inputs).filter(valid));
+  const out = {};
+  for (const [slot, assetId] of Object.entries(inputs)) {
+    if (valid(slot)) {
+      out[slot] = assetId;
+      continue;
+    }
+    const kind = p.assets.find((x) => x.id === assetId)?.kind;
+    const key = String(slot).trim().toLowerCase();
+    const free = d.mediaInputs.filter((m) => !used.has(m.id) && (!kind || m.kind === kind));
+    const byTitle = free.filter((m) => m.title?.toLowerCase() === key);
+    const hit =
+      free.find((m) => m.nodeId === key.replace(/^media:/, '')) ||
+      (byTitle.length === 1 ? byTitle[0] : undefined) ||
+      (/^(media|image|imagem|video|vídeo|audio|áudio|input|entrada)$/.test(key) ? free[0] : undefined);
+    if (!hit) {
+      out[slot] = assetId; // o erro normal explica e lista os slots
+      continue;
+    }
+    used.add(hit.id);
+    out[hit.id] = assetId;
+  }
+  return out;
+}
+
 const findAsset = (p, id) => {
   const a = p.assets.find((x) => x.id === id);
   if (!a) throw new Error(`Asset "${id}" não existe neste projeto. Use list_assets.`);
@@ -353,6 +382,7 @@ async function generate(ctx, { name, values = {}, inputs = {}, characters = [], 
   const d = await describeByName(name);
   const media = {};
   const inputIds = [];
+  inputs = resolveSlots(p, d, inputs);
   for (const [slot, assetId] of Object.entries(inputs)) {
     const a = findAsset(p, assetId);
     if (!a.file) throw new Error(`O asset ${assetId} não é um arquivo de mídia`);
@@ -384,23 +414,39 @@ async function generate(ctx, { name, values = {}, inputs = {}, characters = [], 
 
   // Elenco: a foto de cada personagem vira referência e a ficha dele entra no prompt.
   let extraRefs = [];
-  const cast = (characters || []).map((n) => {
+  const notices = [];
+  let cast = (characters || []).map((n) => {
     const c = findCharacter(p, n);
     if (!c) throw new Error(`"${n}" não está no elenco. Elenco: ${castOf(p).map((x) => x.name).join(', ') || 'vazio'}. Registre com define_character.`);
     return { ...c, asset: findAsset(p, c.assetId) };
   });
-  if (cast.length) {
+  // Personagem do elenco citado no prompt sem estar em characters: entra sozinho
+  // (antes era um erro, e o agente gastava uma rodada para repetir a chamada).
+  const autoCast = pf && d.references?.maxImages
+    ? mentionedCharacters(p, String(resolved[pf.id] ?? ''))
+        .filter((c) => !cast.some((x) => x.id === c.id))
+        .map((c) => ({ ...c, asset: findAsset(p, c.assetId) }))
+    : [];
+  if (cast.length || autoCast.length) {
     if (!pf) throw new Error(`O workflow ${d.name} não tem campo de prompt para descrever os personagens.`);
-    const placed = placeCharacters(d, inputs, cast, resolved[pf.id]);
-    for (const [slot, a] of Object.entries(placed.slots)) media[slot] = a.file;
-    extraRefs = placed.extra.map((a) => a.file);
-    resolved[pf.id] = placed.prompt;
-    for (const c of cast) inputIds.push(c.asset.id);
-  } else if (pf && castOf(p).length) {
-    // Personagem do elenco citado sem characters: sairia só pelo texto e mudaria de cara.
-    const cited = mentionedCharacters(p, String(resolved[pf.id] ?? ''));
-    if (cited.length) {
-      throw new Error(`O prompt cita ${cited.map((c) => c.name).join(', ')}, do elenco. Passe characters: [${cited.map((c) => `"${c.name}"`).join(', ')}] para o Trama usar a foto e a ficha de cada um.`);
+    const names = (list) => list.map((c) => c.name).join(', ');
+    let placed = null;
+    try {
+      placed = placeCharacters(d, inputs, [...cast, ...autoCast], resolved[pf.id]);
+      if (autoCast.length) notices.push(`O prompt cita ${names(autoCast)}, do elenco: o Trama pôs a foto e a ficha como referência. Da próxima vez passe em characters.`);
+      cast = [...cast, ...autoCast];
+    } catch (error) {
+      // Não coube com os citados: segue com os pedidos em characters (se nem eles
+      // cabem, o erro vale) e avisa que o citado sai só pelo texto.
+      if (!autoCast.length) throw error;
+      if (cast.length) placed = placeCharacters(d, inputs, cast, resolved[pf.id]);
+      notices.push(`O prompt cita ${names(autoCast)}, do elenco, mas não sobrou referência de imagem para a foto: sai só pelo texto e pode mudar de cara.`);
+    }
+    if (placed) {
+      for (const [slot, a] of Object.entries(placed.slots)) media[slot] = a.file;
+      extraRefs = placed.extra.map((a) => a.file);
+      resolved[pf.id] = placed.prompt;
+      for (const c of cast) inputIds.push(c.asset.id);
     }
   }
 
@@ -470,7 +516,7 @@ async function generate(ctx, { name, values = {}, inputs = {}, characters = [], 
     const durField = durationField(d);
     const asked = durField ? Number(resolved[durField.id] ?? durField.default) : undefined;
     const { checks, warnings } = await inspectAll(created, { expect: Number.isFinite(asked) && asked > 0 ? { duration: asked } : {} });
-    return { label, assetIds: created.map((a) => a.id), warnings, result: { ok: true, created: created.map(describeAsset), seeds, checks, warnings } };
+    return { label, assetIds: created.map((a) => a.id), warnings, result: { ok: true, created: created.map(describeAsset), seeds, checks, warnings, ...(notices.length ? { notes: notices } : {}) } };
   } catch (error) {
     if (reviseId) updateAsset(p, target.id, { status: target.file ? 'ready' : previous.status, error: target.file ? undefined : previous.error, detail: '', progress: 1 }, { persist: true });
     else updateAsset(p, target.id, { status: 'error', error: error.message, detail: '' }, { persist: true });

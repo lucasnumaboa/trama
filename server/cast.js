@@ -41,10 +41,26 @@ export function removeCharacter(p, name) {
   return c;
 }
 
-/** Personagens do elenco citados no texto (@Nome ou o nome como palavra). */
+// Sem acento, mas respeitando maiúsculas.
+const deaccent = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+/**
+ * Personagens do elenco citados no texto: como @Nome (qualquer caixa) ou pelo nome
+ * escrito como nome próprio, com inicial maiúscula. "Sumo" conta, "sumo ring" não:
+ * o nome de um personagem pode ser uma palavra comum.
+ */
 export function mentionedCharacters(p, text) {
-  const t = norm(text);
-  return castOf(p).filter((c) => new RegExp(`(^|[^\\p{L}\\p{N}])@?${escape(norm(c.name))}(?![\\p{L}\\p{N}])`, 'u').test(t));
+  const t = deaccent(text);
+  const edge = '(?![\\p{L}\\p{N}])';
+  return castOf(p).filter((c) => {
+    const name = escape(deaccent(c.name).trim());
+    if (new RegExp(`@\\{?${name}\\}?${edge}`, 'iu').test(t)) return true;
+    for (const m of t.matchAll(new RegExp(`(^|[^\\p{L}\\p{N}@])(${name})${edge}`, 'giu'))) {
+      const first = m[2][0];
+      if (first !== first.toLowerCase()) return true;
+    }
+    return false;
+  });
 }
 
 /**

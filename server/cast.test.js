@@ -99,3 +99,23 @@ test('one reading gives the scene and the main character sheet', () => {
   assert.equal(splitReading('A crowd at a market.\n\n**CHARACTER SHEET:** none').character, null);
   assert.equal(splitReading('Just a landscape.').character, null);
 });
+
+test('a cast name that is also a common word only counts as a proper noun or @mention', () => {
+  const p = { assets: [] };
+  upsertCharacter(p, { name: 'Sumo', assetId: 'asset_1', sheet: 's', brief: 'huge wrestler' });
+  assert.deepEqual(mentionedCharacters(p, 'two men fight in a sumo ring, rain falls'), []);
+  assert.deepEqual(mentionedCharacters(p, 'Sumo grabs the vendor').map((c) => c.name), ['Sumo']);
+  assert.deepEqual(mentionedCharacters(p, 'then @sumo lifts him').map((c) => c.name), ['Sumo']);
+});
+
+test('abbreviated slot names resolve to the workflow slot', async () => {
+  const { resolveSlots } = await import('./tools.js');
+  const d = describe('trama_video_h3_referencia.json');
+  const [s1, s2] = d.mediaInputs.map((m) => m.id);
+  const p = { assets: [{ id: 'asset_a', kind: 'image' }, { id: 'asset_b', kind: 'image' }, { id: 'asset_v', kind: 'video' }] };
+  assert.deepEqual(resolveSlots(p, d, { media: 'asset_a' }), { [s1]: 'asset_a' });
+  assert.deepEqual(resolveSlots(p, d, { [s1]: 'asset_a', media: 'asset_b' }), { [s1]: 'asset_a', [s2]: 'asset_b' });
+  assert.deepEqual(resolveSlots(p, d, { [s2.replace('media:', '')]: 'asset_b' }), { [s2]: 'asset_b' });
+  // vídeo num workflow só de imagens: fica como veio e o erro normal explica
+  assert.deepEqual(resolveSlots(p, d, { media: 'asset_v' }), { media: 'asset_v' });
+});
