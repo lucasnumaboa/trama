@@ -77,7 +77,7 @@ ${capabilityPromptBlock(p.models || {})}
 
 Fotos do usuário (regra forte): quando ele manda uma foto, ela é a fonte. As pessoas, o lugar, as roupas e os objetos da foto são os do trabalho; você recebe a descrição de cada imagem anexada (ou use look_at). Ligue o pedido a quem está na foto: "a pessoa", "ele", "eles" são as pessoas da foto (ex.: numa foto com vendedor e cliente, "ele vai comprar" é o cliente e "eles vão conversar" são os dois). Nunca invente um personagem que não está na foto nem troque alguém da foto por outra pessoa. Só crie personagem novo se o usuário pedir ou se a história exigir alguém que não está em nenhuma foto, e nesse caso pergunte antes ("a história pede uma segunda pessoa; crio uma ou você manda a foto?"). Não pergunte o que a foto já mostra; pergunte só o que ela não responde. Para outros ângulos e cenas, edite a partir da foto (Editar imagem) em vez de gerar do zero.
 
-Elenco (personagens fixos, regra forte): quando o trabalho tem personagens que voltam em mais de uma geração (fotos do usuário ou personagens gerados e aprovados), registre cada um com define_character antes de escrever as cenas: nome curto, o card da foto e, se o usuário disse algo do físico, notes. Confira a ficha devolvida e corrija com notes o que estiver errado. Em TODA geração em que um personagem do elenco aparece, passe characters com os nomes e cite cada um no prompt como @Nome. O Trama põe a foto de cada um nas referências do workflow e escreve a ficha no prompt. Não descreva o físico deles com suas palavras (altura, corpo, rosto, cabelo, roupa): descreva só ação, pose, expressão, posição na cena e câmera. Nunca mostre um personagem do elenco sem passá-lo em characters, nem com workflow só de texto (texto → vídeo/imagem): use um com imagens de referência. Se a cena pedir mais personagens do que o workflow aceita, o erro diz o limite: divida em planos.
+Elenco (personagens fixos, regra forte): quando o trabalho tem personagens que voltam em mais de uma geração (fotos do usuário ou personagens gerados e aprovados), registre cada um com define_character antes de escrever as cenas: nome curto, o card da foto e, se o usuário disse algo do físico, notes. Confira a ficha devolvida e corrija com notes o que estiver errado. Em TODA geração em que um personagem do elenco aparece, passe characters com os nomes e cite cada um no prompt como @Nome. O Trama põe a foto de cada um nas referências do workflow e escreve a ficha no prompt. Não descreva o físico deles com suas palavras (altura, corpo, rosto, cabelo, roupa): descreva só ação, pose, expressão, posição na cena e câmera. Nunca mostre um personagem do elenco sem passá-lo em characters, nem com workflow só de texto (texto → vídeo/imagem): use um com imagens de referência. Antes de escolher o workflow de uma cena, conte os personagens do elenco nela e as outras imagens que vão junto (cenário, quadro base) e confira no catálogo quantas fotos de referência ele aceita: uma cena com 2 personagens não cabe num workflow de 1 foto. Se nenhum couber, divida em planos. Quando uma ferramenta devolver erro, leia a mensagem e mude o que ela aponta; não repita a mesma chamada.
 ${castPromptBlock(p)}
 
 Quando o usuário cita itens no meio do texto ("o personagem [Imagem 1 …] abraça o [Imagem 2 …]"), a posição importa: use cada item no papel que o texto dá a ele e, nos prompts dos workflows com várias referências, siga a numeração na mesma ordem, com a notação que as notas do workflow pedem (<Picture 1> no MiniMax H3, <image1> no Qwen Image 2.1).
@@ -99,6 +99,8 @@ function failLabel(tool, args = {}) {
     get_workflow: wf ? `Não consegui ler ${wf}` : 'Não consegui ler o workflow',
     media_info: 'Não consegui medir a mídia',
     select_version: 'Não consegui trocar a versão',
+    look_at: 'Não consegui olhar o card',
+    define_character: 'Não consegui registrar o personagem',
   };
   return names[tool] || `Falhou: ${tool.replace(/_/g, ' ')}`;
 }
@@ -202,12 +204,19 @@ export async function sendMessage(projectId, { text, attachments = [], model }) 
       for (let step = 0; step < MAX_STEPS; step++) {
         reply.thinking = true;
         push();
+        let retryPart = null;
         const { message } = await chatWithTools({
           model: reply.model,
           messages: [{ role: 'system', content: await systemPrompt(p) }, ...contextMessages(p, turnStart)],
           tools: TOOL_SCHEMAS,
           signal: controller.signal,
+          onRetry: ({ attempt, why }) => {
+            if (!retryPart) reply.parts.push((retryPart = { type: 'step', id: shortId('net'), tool: 'network', status: 'running', assetIds: [] }));
+            retryPart.label = `Sem resposta do DeepSeek (${why}), tentando de novo (${attempt}ª vez)`;
+            push();
+          },
         });
+        if (retryPart) Object.assign(retryPart, { status: 'done', label: 'A conexão com o DeepSeek caiu e voltou' });
         reply.thinking = false;
         p.llm.push(message);
         if (message.content?.trim()) reply.parts.push({ type: 'text', text: message.content.trim() });

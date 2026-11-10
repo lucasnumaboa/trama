@@ -3,7 +3,7 @@
 import * as comfy from './comfy.js';
 import { describeByName, runWorkflow } from './exec.js';
 import { editMedia, mediaInfo, OPERATIONS, SINGLE_INPUT_OPS, NoChange } from './media.js';
-import { readImage, describeCharacter } from './vision.js';
+import { readImage, readVideo, describeCharacter } from './vision.js';
 import { castOf, findCharacter, upsertCharacter, removeCharacter, mentionedCharacters, placeCharacters } from './cast.js';
 import {
   addAsset, updateAsset, saveProject, describeAsset, addEdge, emit, placeBelow, addVersion, selectVersion, removeAsset,
@@ -132,7 +132,7 @@ Nas operações de um arquivo só, o resultado vira uma NOVA VERSÃO do mesmo ca
   {
     name: 'look_at',
     description:
-      'Olha uma imagem do projeto com um modelo de visão e devolve o que tem nela: cada pessoa (posição, idade, cabelo, roupa, o que faz, papel provável), o lugar, a luz e o enquadramento. A descrição fica guardada no card. As imagens anexadas pelo usuário já chegam descritas na mensagem: não chame look_at nelas (cada leitura leva 1 a 2 minutos de GPU). Use em imagens geradas, para conferir se saíram como pedido, ou com refresh quando o card ganhou nova versão.',
+      'Olha uma imagem ou um vídeo do projeto com um modelo de visão e devolve o que tem nela: cada pessoa (posição, idade, cabelo, roupa, o que faz, papel provável), o lugar, a luz e o enquadramento. A descrição fica guardada no card. As imagens anexadas pelo usuário já chegam descritas na mensagem: não chame look_at nelas (cada leitura leva 1 a 2 minutos de GPU). Use em imagens e vídeos gerados, para conferir se saíram como pedido (no vídeo ele olha três quadros: início, meio e fim, e lista defeitos como rosto que muda), ou com refresh quando o card ganhou nova versão.',
     parameters: { type: 'object', properties: { asset_id: { type: 'string' }, refresh: { type: 'boolean', description: 'true para olhar de novo (ex.: a imagem ganhou nova versão)' } }, required: ['asset_id'] },
   },
   {
@@ -223,7 +223,7 @@ export async function workflowCatalog() {
       const ins = d.mediaInputs.map((m) => `${KIND_PT[m.kind]} "${m.title}"`).join(' + ') || 'só texto';
       const outs = [...new Set(d.outputs.map((o) => KIND_PT[o.kind] || o.kind))].join(', ');
       const about = clip(d.notes.join(' ').replace(/\s+/g, ' ').replace(/[#*`>]/g, '').trim(), 220);
-      lines.push(`- ${d.name}: ${ins} → ${outs}.${about ? ` ${about}` : ''}`);
+      lines.push(`- ${d.name}: ${ins} → ${outs}. ${refCapacity(d)}${about ? ` ${about}` : ''}`);
     } catch (e) {
       lines.push(`- ${w.name}: indisponível (${clip(e.message, 120)})`);
     }
@@ -232,11 +232,26 @@ export async function workflowCatalog() {
   return catalogCache.text;
 }
 
+// Quantos personagens/fotos de referência cabem numa geração: o agente escolhe o
+// workflow certo de primeira em vez de descobrir o limite errando.
+function refCapacity(d) {
+  const n = d.references?.maxImages || 0;
+  if (!n) return 'Sem foto de referência: não serve para personagens do elenco.';
+  // Referência de verdade: lista crescente (H3) ou notas que citam <Picture 1>/<image1>.
+  // Senão as imagens são quadros/base (primeiro e último quadro, imagem a editar).
+  const cites = /<\s*(picture|image)\s*1\s*>/i.test(d.notes.join(' '));
+  if (!d.references.grow && !cites) {
+    return `Recebe ${n === 1 ? '1 imagem' : `${n} imagens`} como quadro/base, não como foto de referência de personagem.`;
+  }
+  return n === 1 ? 'Cabe 1 foto de referência (1 personagem).' : `Cabem até ${n} fotos de referência (até ${n} personagens).`;
+}
+
 function workflowSummary(d) {
   return {
     name: d.name,
     about: clip(d.notes.join(' ').replace(/\s+/g, ' ').replace(/[#*`]/g, ''), 280) || undefined,
     media_inputs: d.mediaInputs.map((m) => ({ slot: m.id, kind: m.kind, title: m.title })),
+    max_reference_images: d.references?.maxImages || 0,
     prompt_field: promptField(d)?.id,
     text_fields: d.fields.filter((f) => f.kind === 'text' && !f.internal).map((f) => ({ id: f.id, node: f.nodeTitle })),
     outputs: [...new Set(d.outputs.map((o) => o.kind))],
@@ -268,6 +283,8 @@ function workflowDetail(d) {
     name: d.name,
     notes: clip(d.notes.join('\n\n'), 2500),
     media_inputs: d.mediaInputs.map((m) => ({ slot: m.id, kind: m.kind, title: m.title, example_file: m.default })),
+    max_reference_images: d.references?.maxImages || 0,
+    reference_capacity: refCapacity(d),
     main_fields: d.fields.filter((f) => f.basic).map(field),
     other_fields: d.fields
       .filter((f) => !f.basic)
@@ -643,10 +660,18 @@ export async function runTool(name, args, ctx) {
 
     case 'look_at': {
       const a = findAsset(p, args.asset_id);
-      if (a.kind !== 'image' || !a.file) throw new Error('look_at só olha imagens (para vídeo, olhe a imagem que deu origem a ele).');
+      if (!a.file || (a.kind !== 'image' && a.kind !== 'video')) throw new Error('look_at olha imagens e vídeos; esse card não é nenhum dos dois.');
+      if (a.status === 'generating') throw new Error('Esse card ainda está gerando.');
       if (a.vision && !args.refresh) {
         // Já lida: devolve a descrição guardada, sem passar pelo modelo de novo.
         return { label: `Usou a descrição que já tinha de "${a.title}"`, result: { asset_id: a.id, title: a.title, description: a.vision, cached: true } };
+      }
+      if (a.kind === 'video') {
+        ctx.step({ label: `Olhando o vídeo "${a.title}"`, assetIds: [a.id] });
+        const vision = await readVideo(a, { signal: ctx.signal });
+        updateAsset(p, a.id, { vision });
+        saveProject(p);
+        return { label: `Olhou o vídeo "${a.title}"`, result: { asset_id: a.id, title: a.title, description: vision } };
       }
       ctx.step({ label: `Olhando "${a.title}"` });
       const r = await readImage(a, { signal: ctx.signal });

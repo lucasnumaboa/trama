@@ -3,6 +3,7 @@
 // principal) fica guardada no card, então cada imagem é lida uma vez só.
 import * as comfy from './comfy.js';
 import { asComfyInput } from './exec.js';
+import { videoFrames } from './media.js';
 
 // Modelos de visão que funcionam no TextGenerate, do preferido para o mais leve.
 // O Qwen3-VL 8B acerta quem faz o quê; o 9B (reescritor de prompt) troca papéis e vaza o raciocínio.
@@ -96,6 +97,18 @@ function sheetToCharacter(sheet) {
 }
 
 /** Só a descrição da cena (compatível com o uso antigo). */
+// Vídeo: três quadros lado a lado (início, meio, fim).
+const VIDEO_ASK = `This picture shows three frames of one short video, left to right: beginning, middle and end.
+Describe the video in under 220 words: who is in it (for each person: build, face, hair, facial hair, glasses, clothes), where it happens, what happens from the first to the last frame, and the camera.
+Then, on a line starting with "PROBLEMS:", list visible defects: a person whose face, body or clothes change between frames, deformed hands or faces, extra or missing limbs, people merging, text glitches. Write "PROBLEMS: none" if there are none.
+Plain text, factual, no guessing about sound.`;
+
+/** Lê um vídeo pelos três quadros. Devolve o texto. */
+export async function readVideo(asset, { signal } = {}) {
+  const frames = await videoFrames(asset.file, signal);
+  return ask({ file: frames }, VIDEO_ASK, { signal, maxLength: 1200 });
+}
+
 export const describeImage = async (asset, opts) => (await readImage(asset, opts)).vision;
 
 /**

@@ -166,6 +166,28 @@ async function publish(localPath) {
   return { filename: name, subfolder: '', type: 'input', kind: comfy.mediaKind(name), size_mb: Math.round((buffer.length / 1048576) * 100) / 100 };
 }
 
+/**
+ * Três quadros de um vídeo (início, meio, fim) lado a lado numa imagem, enviada para
+ * a pasta input do ComfyUI. Serve para o modelo de visão "olhar" um vídeo.
+ */
+export async function videoFrames(file, signal) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'trama-'));
+  try {
+    const src = await download(file, dir);
+    const { duration } = await probe(src);
+    const d = Number(duration) || 1;
+    const times = [0.12, 0.5, 0.88].map((f) => (d * f).toFixed(2));
+    const target = path.join(dir, `frames-${randomUUID()}.png`);
+    const inputs = times.flatMap((t) => ['-ss', t, '-i', src]);
+    const scale = times.map((_, i) => `[${i}:v]scale=-2:400,setsar=1[f${i}]`).join(';');
+    const graph = `${scale};${times.map((_, i) => `[f${i}]`).join('')}hstack=inputs=${times.length}[out]`;
+    await run('ffmpeg', ['-y', '-hide_banner', '-v', 'error', ...inputs, '-filter_complex', graph, '-map', '[out]', '-frames:v', '1', target], signal);
+    return publish(target);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /** Informações completas de um arquivo local (inclui silêncio, bordas e cor dominante). */
 async function inspectLocal(local, kind) {
   const info = await probe(local);
