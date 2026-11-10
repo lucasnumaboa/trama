@@ -19,6 +19,7 @@ export function setupUpdater({ getWindow, onState = () => {} }) {
   autoUpdater.logger = { info: log('info'), warn: log('warn'), error: log('error'), debug: () => {} };
   autoUpdater.autoDownload = false; // só baixa depois que o usuário aceitar
   autoUpdater.autoInstallOnAppQuit = true; // baixada e adiada: instala quando o app fechar
+  autoUpdater.disableWebInstaller = true; // o instalador publicado é o completo
 
   let manual = false; // a busca atual foi pedida pelo usuário (mostra "já está atualizado" e erros)
   let busy = false; // baixando ou esperando resposta
