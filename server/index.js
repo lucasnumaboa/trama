@@ -3,7 +3,7 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Readable } from 'node:stream';
+import { Readable, pipeline } from 'node:stream';
 import * as comfy from './comfy.js';
 import { describeByName } from './exec.js';
 import { listModels } from './deepseek.js';
@@ -85,7 +85,11 @@ app.get('/api/comfy/view', wrap(async (req, res) => {
     if (v) res.setHeader(h, v);
   }
   res.setHeader('Cache-Control', 'private, max-age=86400');
-  Readable.fromWeb(upstream.body).pipe(res);
+  // pipeline trata erro no meio do stream (ComfyUI caiu, navegador fechou a conexão)
+  // em vez de deixar virar uma exceção não tratada que derruba o servidor.
+  pipeline(Readable.fromWeb(upstream.body), res, (error) => {
+    if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') console.error('[GET /api/comfy/view]', error.message);
+  });
 }));
 
 // ---- Projetos ----

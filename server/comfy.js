@@ -5,12 +5,24 @@ import { getSettings } from './settings.js';
 
 const base = () => getSettings().comfyUrl;
 
-async function request(path, init = {}) {
+// streamBody: o tempo limite vale só até a resposta começar. Um vídeo servido para a
+// interface pode ficar aberto por muito tempo (o navegador pausa o download), e um
+// timeout no meio do stream derrubava o processo.
+async function request(path, { timeout = 60000, streamBody = false, ...init } = {}) {
+  let signal = AbortSignal.timeout(timeout);
+  let timer = null;
+  if (streamBody) {
+    const controller = new AbortController();
+    timer = setTimeout(() => controller.abort(), timeout);
+    signal = controller.signal;
+  }
   let res;
   try {
-    res = await fetch(`${base()}${path}`, { signal: AbortSignal.timeout(init.timeout ?? 60000), ...init });
+    res = await fetch(`${base()}${path}`, { signal, ...init });
   } catch (error) {
     throw new Error(`ComfyUI não respondeu em ${base()} (${error.cause?.code || error.message})`);
+  } finally {
+    clearTimeout(timer);
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -57,7 +69,7 @@ export async function uploadInput(buffer, filename, { overwrite = true } = {}) {
 
 export async function fetchFile({ filename, subfolder = '', type = 'output' }) {
   const qs = new URLSearchParams({ filename, subfolder, type });
-  return request(`/view?${qs}`, { timeout: 600000 });
+  return request(`/view?${qs}`, { timeout: 60000, streamBody: true });
 }
 
 export const viewUrl = ({ filename, subfolder = '', type = 'output' }) =>

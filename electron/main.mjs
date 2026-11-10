@@ -1,11 +1,24 @@
 // App de desktop do Trama: sobe o servidor dentro do próprio processo e abre a interface numa janela.
 import { app, BrowserWindow, dialog, shell } from 'electron';
+import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 let win = null;
+
+// Um erro solto do servidor (ex.: stream de arquivo interrompido) não deve abrir uma
+// janela de erro nem parar o app: vai para %APPDATA%\Trama\trama.log.
+const logError = (kind) => (error) => {
+  const line = `[${new Date().toISOString()}] ${kind}: ${error?.stack || error}\n`;
+  console.error(line);
+  try {
+    fs.appendFileSync(path.join(app.getPath('userData'), 'trama.log'), line);
+  } catch {}
+};
+process.on('uncaughtException', logError('uncaughtException'));
+process.on('unhandledRejection', logError('unhandledRejection'));
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
