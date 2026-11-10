@@ -89,6 +89,8 @@ To add a model: build and save the workflow in ComfyUI, then **Settings → Add 
 
 ## Getting started
 
+The easiest way on Windows: download `Trama-Setup-<version>.exe` from the [latest release](https://github.com/lucasnumaboa/trama/releases/latest) and run it. To run from source:
+
 ```bat
 git clone https://github.com/lucasnumaboa/trama.git
 cd trama
@@ -124,6 +126,8 @@ node tools/test_workflows.mjs              # also runs the fast ones for real
 ### Building the installer
 
 `build-installer.bat` (or `npm run dist`) builds a Windows installer, `installer/output/Trama-Setup-<version>.exe`, with Electron and electron-builder. Run the exe to install Trama for the current user. It adds Start menu and desktop shortcuts and opens Trama in its own window, with no browser or console window. Closing the window keeps Trama running in the system tray, so generations keep going. Click the tray icon to open it again, or right-click it and choose Sair to quit.
+
+**Updates:** the installed app checks the [GitHub releases](https://github.com/lucasnumaboa/trama/releases) when it opens and every 4 hours. When there is a newer version it asks before downloading, then offers to restart and install, or to install when you quit. You can also check from the tray menu (Procurar atualizações). To publish a new version, raise `version` in `package.json`, commit and push, then run `npm run release`. This builds the installer and creates the `v<version>` release with the exe, its `.blockmap` and `latest.yml`, which the app reads to find updates. It needs the [GitHub CLI](https://cli.github.com) logged in.
 
 The installed app bundles its own runtime, so Node.js is not needed on that machine. ComfyUI must be running, and ffmpeg must be on the PATH for video and audio tools. Settings, the API key and projects are stored in `%APPDATA%\Trama\data`, never inside the installer, and uninstalling keeps them. The app uses port 5190, or the next free port if 5190 is taken. `npm run app` opens the same desktop window without installing.
 

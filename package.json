@@ -1,6 +1,6 @@
 {
   "name": "trama",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -14,9 +14,11 @@
     "start": "vite build && node server/index.js",
     "test": "node --test \"server/**/*.test.js\"",
     "app": "vite build && electron .",
-    "dist": "vite build && electron-builder --win nsis"
+    "dist": "vite build && electron-builder --win nsis --publish never",
+    "release": "npm run dist && node tools/release.mjs"
   },
   "dependencies": {
+    "electron-updater": "6.8.12",
     "express": "4.21.2"
   },
   "devDependencies": {
@@ -61,6 +63,14 @@
       "uninstallerIcon": "installer/trama.ico",
       "artifactName": "Trama-Setup-${version}.exe",
       "deleteAppDataOnUninstall": false
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "lucasnumaboa",
+        "repo": "trama",
+        "releaseType": "release"
+      }
+    ]
   }
 }

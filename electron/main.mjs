@@ -4,12 +4,14 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { setupUpdater } from './updater.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 let win = null;
 let tray = null;
 let quitting = false; // true só quando o usuário escolhe Sair (no ícone da bandeja)
 let trayHintShown = false;
+let updater = null;
 
 // Um erro solto do servidor (ex.: stream de arquivo interrompido) não deve abrir uma
 // janela de erro nem parar o app: vai para %APPDATA%\Trama\trama.log.
@@ -45,10 +47,12 @@ function showWindow() {
 function createTray() {
   const icon = nativeImage.createFromPath(path.join(ROOT, 'public', 'favicon.ico'));
   tray = new Tray(icon.isEmpty() ? nativeImage.createFromPath(path.join(ROOT, 'public', 'favicon.png')).resize({ width: 16, height: 16 }) : icon);
-  tray.setToolTip('Trama');
+  tray.setToolTip(`Trama ${app.getVersion()}`);
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Abrir o Trama', click: showWindow },
+      { label: 'Procurar atualizações', click: () => updater?.check(true) },
+      { label: `Versão ${app.getVersion()}`, enabled: false },
       { type: 'separator' },
       {
         label: 'Sair',
@@ -139,6 +143,13 @@ async function start() {
   });
   win.on('closed', () => (win = null));
   createTray();
+  updater = setupUpdater({
+    getWindow: () => win,
+    onState: (st) => {
+      const tip = st.percent !== undefined ? `baixando atualização (${st.percent}%)` : st.ready ? `atualização ${st.ready} pronta` : '';
+      tray?.setToolTip(`Trama ${app.getVersion()}${tip ? ` — ${tip}` : ''}`);
+    },
+  });
 
   await win.loadURL(origin);
 }
