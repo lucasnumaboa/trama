@@ -1,6 +1,6 @@
 // "Olhos" do agente: descreve imagens com um modelo de visão do próprio ComfyUI
-// (TextGenerate com um codificador Qwen-VL). A descrição fica guardada no card,
-// então cada imagem é lida uma vez só.
+// (TextGenerate com um codificador Qwen-VL). A leitura (cena + ficha do personagem
+// principal) fica guardada no card, então cada imagem é lida uma vez só.
 import * as comfy from './comfy.js';
 import { asComfyInput } from './exec.js';
 
@@ -20,11 +20,8 @@ Be factual and specific. No names, no guesses beyond what is visible. Plain text
 
 // Ficha de personagem: só o físico e a roupa, para repetir o mesmo personagem em
 // cenas novas. A última linha (BRIEF) é a versão curta que entra nos prompts.
-const CHARACTER_ASK = (focus) => `You are writing a character model sheet so an animator can draw this exact character again in new scenes.
-Describe ONLY the main character${focus ? ` (${focus})` : ''}, ignore the background and other people.
-Answer each line, factual and specific, judging proportions against an average adult human:
-HEIGHT & PROPORTIONS: overall height impression (very short / dwarf-like / child-sized / average / tall / giant), head-to-body ratio, leg and arm length.
-BODY: build and weight (slim, average, stocky, heavy, obese, very muscular), shoulders, belly.
+const SHEET_FIELDS = `HEIGHT & PROPORTIONS: overall height impression (very short / dwarf-like / child-sized / average / tall / giant), head-to-body ratio, leg and arm length.
+BODY: build and weight (slim, average, stocky, heavy, obese, very muscular), judged from the belly, chest, arms and face fullness; if any of them look thick or round, do not call the build average. Shoulders, belly.
 FACE: apparent age, face shape, skin tone, eyes, eyebrows, nose, mouth, typical expression.
 EARS & MARKS: ear shape (normal or pointed), scars, eyepatch, moles, tattoos.
 HAIR: color, length, texture (straight, wavy, curly), style (topknot, buzz cut, etc.).
@@ -33,8 +30,22 @@ GLASSES: none, or frame shape, thickness and color.
 OUTFIT: each garment from top to bottom with colors, material and condition (torn, patched), footwear.
 PROPS: objects the character carries or wears (weapons, pipe, bag, basket, chain).
 MUST KEEP: the 4 traits that make this character recognizable.
-BRIEF: one line, at most 45 words, with height/proportions, build, face, hair, facial hair, glasses and outfit.
+BRIEF: one line, at most 45 words, with height/proportions, build, face, hair, facial hair, glasses and outfit.`;
+
+const CHARACTER_ASK = (focus) => `You are writing a character model sheet so an animator can draw this exact character again in new scenes.
+Describe ONLY the main character${focus ? ` (${focus})` : ''}, ignore the background and other people.
+Answer each line, factual and specific, judging proportions against an average adult human:
+${SHEET_FIELDS}
 Plain text, these labels only, no extra commentary.`;
+
+// Leitura única de uma imagem: a descrição da cena e, se houver um personagem
+// principal, a ficha dele. Assim cada imagem passa pelo modelo de visão uma vez só,
+// e registrar o personagem depois (define_character) não precisa ler de novo.
+const FULL_ASK = `${ASK.replace('under 250 words', 'under 250 words for this part')}
+
+Then, if the image shows ONE main character (a single person or creature, or one clearly in focus), add a line "CHARACTER SHEET" followed by these labelled lines about that character, judging proportions against an average adult human:
+${SHEET_FIELDS}
+If there is no single main character, write "CHARACTER SHEET: none".`;
 
 let chosen;
 async function visionModel() {
@@ -59,22 +70,40 @@ function cleanText(raw) {
 }
 
 /**
- * Descreve uma imagem (asset). Devolve o texto ou lança erro.
- * @param {{ file: {filename, subfolder, type} }} asset
+ * Lê uma imagem (asset) uma vez: devolve { vision, character }.
+ * vision = descrição da cena; character = { sheet, brief } do personagem principal ou null.
  */
-export const describeImage = (asset, opts) => ask(asset, ASK, opts);
+export async function readImage(asset, opts) {
+  return splitReading(await ask(asset, FULL_ASK, { ...opts, maxLength: 1500 }));
+}
+
+/** Separa a descrição da cena e a ficha do personagem (se houver). */
+export function splitReading(text) {
+  const at = String(text).search(/^\s*[#*]*\s*CHARACTER SHEET\b/im);
+  if (at < 0) return { vision: String(text).trim(), character: null };
+  const vision = text.slice(0, at).trim();
+  const rest = text.slice(at).replace(/^\s*[#*]*\s*CHARACTER SHEET[*:\s]*/i, '').trim();
+  if (!rest || /^none\b/i.test(rest) || !/\bBRIEF\b/i.test(rest)) return { vision, character: null };
+  return { vision, character: sheetToCharacter(rest) };
+}
+
+function sheetToCharacter(sheet) {
+  // O BRIEF às vezes deixa de fora um traço marcante (ex.: orelhas pontudas) que está
+  // em MUST KEEP: os dois entram no prompt.
+  const keep = String(sheet).match(/^\s*\**MUST KEEP\s*:?\**\s*:?\s*(.+)$/im)?.[1]?.trim().replace(/[.\s]+$/, '');
+  const brief = parseBrief(sheet).replace(/[.\s]+$/, '');
+  return { sheet, brief: keep ? `${brief}. Must keep: ${keep}` : brief };
+}
+
+/** Só a descrição da cena (compatível com o uso antigo). */
+export const describeImage = async (asset, opts) => (await readImage(asset, opts)).vision;
 
 /**
  * Ficha física de um personagem. Devolve { sheet, brief }.
  * focus: qual pessoa da imagem, quando houver mais de uma (ex.: "the man with the pipe").
  */
 export async function describeCharacter(asset, { focus, signal } = {}) {
-  const sheet = await ask(asset, CHARACTER_ASK(focus), { signal });
-  // O BRIEF às vezes deixa de fora um traço marcante (ex.: orelhas pontudas) que está
-  // em MUST KEEP: os dois entram no prompt.
-  const keep = String(sheet).match(/^\s*\**MUST KEEP\s*:?\**\s*:?\s*(.+)$/im)?.[1]?.trim().replace(/[.\s]+$/, '');
-  const brief = parseBrief(sheet).replace(/[.\s]+$/, '');
-  return { sheet, brief: keep ? `${brief}. Must keep: ${keep}` : brief };
+  return sheetToCharacter(await ask(asset, CHARACTER_ASK(focus), { signal }));
 }
 
 /** A linha BRIEF da ficha; sem ela, um resumo das primeiras linhas. */
@@ -90,7 +119,7 @@ export function parseBrief(sheet) {
     .slice(0, 320);
 }
 
-async function ask(asset, question, { signal } = {}) {
+async function ask(asset, question, { signal, maxLength = 900 } = {}) {
   const model = await visionModel();
   if (!model) throw new Error('Não há modelo de visão instalado no ComfyUI (TextGenerate + Qwen-VL).');
   const image = await asComfyInput(asset.file);
@@ -99,7 +128,7 @@ async function ask(asset, question, { signal } = {}) {
     2: { class_type: 'CLIPLoader', inputs: { clip_name: model[0], type: model[1], device: 'default' } },
     3: {
       class_type: 'TextGenerate',
-      inputs: { clip: ['2', 0], prompt: question, image: ['1', 0], max_length: 900, sampling_mode: 'off', thinking: false, use_default_template: true },
+      inputs: { clip: ['2', 0], prompt: question, image: ['1', 0], max_length: maxLength, sampling_mode: 'off', thinking: false, use_default_template: true },
     },
     4: { class_type: 'PreviewAny', inputs: { source: ['3', 0] } },
   };

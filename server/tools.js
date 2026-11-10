@@ -3,7 +3,7 @@
 import * as comfy from './comfy.js';
 import { describeByName, runWorkflow } from './exec.js';
 import { editMedia, mediaInfo, OPERATIONS, SINGLE_INPUT_OPS, NoChange } from './media.js';
-import { describeImage, describeCharacter } from './vision.js';
+import { readImage, describeCharacter } from './vision.js';
 import { castOf, findCharacter, upsertCharacter, removeCharacter, mentionedCharacters, placeCharacters } from './cast.js';
 import {
   addAsset, updateAsset, saveProject, describeAsset, addEdge, emit, placeBelow, addVersion, selectVersion, removeAsset,
@@ -132,7 +132,7 @@ Nas operações de um arquivo só, o resultado vira uma NOVA VERSÃO do mesmo ca
   {
     name: 'look_at',
     description:
-      'Olha uma imagem do projeto com um modelo de visão e devolve o que tem nela: cada pessoa (posição, idade, cabelo, roupa, o que faz, papel provável), o lugar, a luz e o enquadramento. A descrição fica guardada no card (fotos enviadas pelo usuário já chegam descritas). Use antes de planejar com uma foto e para conferir se uma imagem gerada saiu como pedido.',
+      'Olha uma imagem do projeto com um modelo de visão e devolve o que tem nela: cada pessoa (posição, idade, cabelo, roupa, o que faz, papel provável), o lugar, a luz e o enquadramento. A descrição fica guardada no card. As imagens anexadas pelo usuário já chegam descritas na mensagem: não chame look_at nelas (cada leitura leva 1 a 2 minutos de GPU). Use em imagens geradas, para conferir se saíram como pedido, ou com refresh quando o card ganhou nova versão.',
     parameters: { type: 'object', properties: { asset_id: { type: 'string' }, refresh: { type: 'boolean', description: 'true para olhar de novo (ex.: a imagem ganhou nova versão)' } }, required: ['asset_id'] },
   },
   {
@@ -620,8 +620,11 @@ export async function runTool(name, args, ctx) {
       if (a.kind !== 'image' || !a.file) throw new Error('O personagem precisa de um card de imagem.');
       const name = String(args.name || '').replace(/^@/, '').trim();
       if (!name) throw new Error('Dê um nome ao personagem.');
-      ctx.step({ label: `Lendo o físico de "${name}"`, assetIds: [a.id] });
-      const { sheet, brief } = await describeCharacter(a, { focus: args.focus, signal: ctx.signal });
+      // A ficha já veio na leitura da imagem (fotos anexadas): não lê de novo.
+      // Com focus (imagem com várias pessoas), lê de novo só a pessoa pedida.
+      const cached = !args.focus && a.characterSheet;
+      if (!cached) ctx.step({ label: `Lendo o físico de "${name}"`, assetIds: [a.id] });
+      const { sheet, brief } = cached || (await describeCharacter(a, { focus: args.focus, signal: ctx.signal }));
       const c = upsertCharacter(p, { name, assetId: a.id, sheet, brief, notes: args.notes });
       saveProject(p);
       return {
@@ -641,11 +644,14 @@ export async function runTool(name, args, ctx) {
     case 'look_at': {
       const a = findAsset(p, args.asset_id);
       if (a.kind !== 'image' || !a.file) throw new Error('look_at só olha imagens (para vídeo, olhe a imagem que deu origem a ele).');
-      if (!a.vision || args.refresh) {
-        ctx.step({ label: `Olhando "${a.title}"` });
-        updateAsset(p, a.id, { vision: await describeImage(a, { signal: ctx.signal }) });
-        saveProject(p);
+      if (a.vision && !args.refresh) {
+        // Já lida: devolve a descrição guardada, sem passar pelo modelo de novo.
+        return { label: `Usou a descrição que já tinha de "${a.title}"`, result: { asset_id: a.id, title: a.title, description: a.vision, cached: true } };
       }
+      ctx.step({ label: `Olhando "${a.title}"` });
+      const r = await readImage(a, { signal: ctx.signal });
+      updateAsset(p, a.id, { vision: r.vision, characterSheet: r.character || undefined });
+      saveProject(p);
       return { label: `Olhou "${a.title}"`, result: { asset_id: a.id, title: a.title, description: a.vision } };
     }
 

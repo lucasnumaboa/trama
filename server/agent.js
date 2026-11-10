@@ -6,7 +6,7 @@ import { getProject, saveProject, emit, shortId, describeAsset } from './project
 import { capabilityPromptBlock } from './capabilities.js';
 import * as comfy from './comfy.js';
 import { getSettings } from './settings.js';
-import { describeImage } from './vision.js';
+import { readImage } from './vision.js';
 import { castPromptBlock } from './cast.js';
 
 const running = new Map(); // projectId -> AbortController
@@ -183,7 +183,11 @@ export async function sendMessage(projectId, { text, attachments = [], model }) 
         reply.parts.push(part);
         push();
         try {
-          a.vision = await describeImage(a, { signal: controller.signal });
+          // Uma leitura só: a cena e, se houver, a ficha do personagem principal
+          // (define_character reaproveita, sem passar a imagem pelo modelo de novo).
+          const r = await readImage(a, { signal: controller.signal });
+          a.vision = r.vision;
+          a.characterSheet = r.character || undefined;
           Object.assign(part, { status: 'done', label: `Olhou "${a.title}"` });
         } catch (error) {
           Object.assign(part, { status: 'error', error: error.message, label: `Não consegui olhar "${a.title}"` });

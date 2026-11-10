@@ -7,7 +7,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { describeWorkflow, referenceInfo } from './describe.js';
 import { placeCharacters, upsertCharacter, findCharacter, mentionedCharacters, removeCharacter } from './cast.js';
-import { parseBrief } from './vision.js';
+import { parseBrief, splitReading } from './vision.js';
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const objectInfo = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(dir, 'object_info.json.gz'))));
@@ -87,4 +87,15 @@ test('user notes come first in the brief; names match with accents and @', () =>
 test('parseBrief reads the BRIEF line', () => {
   assert.equal(parseBrief('HAIR: black\nBRIEF: very short man, round glasses, goatee\n'), 'very short man, round glasses, goatee');
   assert.equal(parseBrief('**BRIEF:** tall woman'), 'tall woman');
+});
+
+test('one reading gives the scene and the main character sheet', () => {
+  const text = `A man sits on a tatami mat holding a pipe.\nSetting: rustic room.\n\nCHARACTER SHEET\nHEIGHT & PROPORTIONS: average\nGLASSES: thick black\nMUST KEEP: glasses, pipe, torn kimono\nBRIEF: heavyset man, thick glasses, torn blue kimono.`;
+  const r = splitReading(text);
+  assert.match(r.vision, /tatami/);
+  assert.doesNotMatch(r.vision, /CHARACTER SHEET/);
+  assert.equal(r.character.brief, 'heavyset man, thick glasses, torn blue kimono. Must keep: glasses, pipe, torn kimono');
+  assert.match(r.character.sheet, /^HEIGHT/);
+  assert.equal(splitReading('A crowd at a market.\n\n**CHARACTER SHEET:** none').character, null);
+  assert.equal(splitReading('Just a landscape.').character, null);
 });
