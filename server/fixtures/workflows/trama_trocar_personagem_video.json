@@ -1,8 +1,8 @@
 {
   "id": "b7a6f0d2-3c41-4f7e-9a51-trama-swap",
   "revision": 0,
-  "last_node_id": 30,
-  "last_link_id": 26,
+  "last_node_id": 32,
+  "last_link_id": 28,
   "nodes": [
     {
       "id": 1,
@@ -842,7 +842,7 @@
         {
           "name": "images",
           "type": "IMAGE",
-          "link": 24
+          "link": 28
         },
         {
           "name": "audio",
@@ -917,9 +917,82 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "## Trocar personagem em vídeo — MiniMax H3 + LoRA de troca\nTroca **uma pessoa** do vídeo pela pessoa da foto, mantendo câmera, fundo, luz, movimento e as outras pessoas.\n- `Vídeo de origem` = a cena que fica. Precisa estar a **24 fps** e ter de **2 a 15 s** (o Trama converte e corta em blocos sozinho).\n- `Personagem novo` = foto da pessoa que entra. Melhor recortada, sem cenário: senão o fundo da foto pode vazar.\n- No prompt, diga **qual pessoa** do <Video 1> sai (ex.: \"the man in the blue apron\") e cite <Picture 1> para quem entra.\n- `Duração (s)` = duração do bloco de vídeo. 8 passos, seed fixa: a mesma seed em todos os blocos ajuda a manter o rosto igual.\n- O som sai do vídeo de origem.\n\nModelos: minimax_h3_fl2va_pruned_int8_convrot, h3_character_swap_pro4500_1000 (LoRA), qwen3vl_32b_minimax_h3_nvfp4_awq, minimax_h3_video_vae_fp16, minimax_h3_audio_vae_fp32.\nOriginal: \"WORKFLOW - MINIMAX H3 CHARACTER SWAP TURBO\" (sem VedaSparseAttention e SageAttention, que não estão instalados nesta máquina: fica mais lento)."
+        "## Trocar personagem em vídeo — MiniMax H3 + LoRA de troca\nTroca **uma pessoa** do vídeo pela pessoa da foto, mantendo câmera, fundo, luz, movimento e as outras pessoas.\n- `Vídeo de origem` = a cena que fica. Precisa estar a **24 fps** e ter de **2 a 15 s** (o Trama converte e corta em blocos sozinho).\n- `Personagem novo` = foto da pessoa que entra. Melhor recortada, sem cenário: senão o fundo da foto pode vazar.\n- No prompt, diga **qual pessoa** do <Video 1> sai (ex.: \"the man in the blue apron\") e cite <Picture 1> para quem entra.\n- `Duração (s)` = duração do bloco de vídeo. 8 passos, seed fixa: a mesma seed em todos os blocos ajuda a manter o rosto igual.\n- O som sai do vídeo de origem.\n\nModelos: minimax_h3_fl2va_pruned_int8_convrot, h3_character_swap_pro4500_1000 (LoRA), qwen3vl_32b_minimax_h3_nvfp4_awq, minimax_h3_video_vae_fp16, minimax_h3_audio_vae_fp32.\nOriginal: \"WORKFLOW - MINIMAX H3 CHARACTER SWAP TURBO\" (sem VedaSparseAttention e SageAttention, que não estão instalados nesta máquina: fica mais lento).\n- Sai ampliado 2x (RealESRGAN x2plus) para os rostos ficarem nítidos: 864x480 vira 1728x960, cerca de 2 min a mais. Para desligar, ponha o nó \"Ampliar 2x\" em bypass."
       ],
       "title": "Como usar"
+    },
+    {
+      "id": 31,
+      "type": "UpscaleModelLoader",
+      "pos": [
+        1640,
+        340
+      ],
+      "size": [
+        320,
+        60
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "UPSCALE_MODEL",
+          "type": "UPSCALE_MODEL",
+          "links": [
+            27
+          ]
+        }
+      ],
+      "title": "Modelo de ampliação",
+      "properties": {
+        "Node name for S&R": "UpscaleModelLoader"
+      },
+      "widgets_values": [
+        "RealESRGAN_x2plus.pth"
+      ]
+    },
+    {
+      "id": 32,
+      "type": "ImageUpscaleWithModel",
+      "pos": [
+        1640,
+        430
+      ],
+      "size": [
+        320,
+        50
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "upscale_model",
+          "type": "UPSCALE_MODEL",
+          "link": 27
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 24
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            28
+          ]
+        }
+      ],
+      "title": "Ampliar 2x",
+      "properties": {
+        "Node name for S&R": "ImageUpscaleWithModel"
+      },
+      "widgets_values": []
     }
   ],
   "links": [
@@ -1111,8 +1184,8 @@
       24,
       26,
       0,
-      27,
-      0,
+      32,
+      1,
       "IMAGE"
     ],
     [
@@ -1130,6 +1203,22 @@
       28,
       0,
       "VIDEO"
+    ],
+    [
+      27,
+      31,
+      0,
+      32,
+      0,
+      "UPSCALE_MODEL"
+    ],
+    [
+      28,
+      32,
+      0,
+      27,
+      0,
+      "IMAGE"
     ]
   ],
   "groups": [],
