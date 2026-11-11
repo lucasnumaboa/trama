@@ -187,6 +187,22 @@ export async function findPerson(asset, photo, people, { signal } = {}) {
   return { match: parseMatch(raw, people), frames, raw };
 }
 
+// Triagem de uma imagem gerada: o que um revisor precisa para comparar com o pedido.
+const REVIEW_ASK = `Describe this generated picture for a quality check.
+First, one line per DISTINCT person or character, left to right:
+PERSON <n>: <gender, age, build, hair, facial hair, glasses, eyepatch, clothes, props> | <where in the frame> | <facing the camera, from behind, profile> | <what they do>
+If the SAME person appears twice (same face, clothes or hat, even from a different angle), still write one line for each copy.
+Then: "FRAME: <horizontal, vertical or square>, <shot size and angle>".
+Then: "SETTING: <place, light, time of day>".
+Then: "TEXT: <any readable text, or none>".
+Then: "DEFECTS: <deformed faces or hands, extra limbs, people merged, or none>".
+Factual, no names, under 220 words.`;
+
+/** Lê uma imagem gerada para a triagem. Devolve o texto. */
+export async function reviewImage(asset, { signal } = {}) {
+  return ask(asset, REVIEW_ASK, { signal, maxLength: 700 });
+}
+
 export const describeImage = async (asset, opts) => (await readImage(asset, opts)).vision;
 
 /**

@@ -13,6 +13,8 @@ const DEFAULTS = {
   deepseekModel: 'deepseek-chat',
   deepseekBaseUrl: 'https://api.deepseek.com',
   comfyUrl: 'http://127.0.0.1:8188',
+  // Triagem: depois de cada imagem/vídeo gerado, a visão descreve e o DeepSeek compara com o pedido.
+  reviewGenerations: true,
 };
 
 let cache = null;
@@ -38,6 +40,7 @@ export function publicSettings() {
     deepseekModel: s.deepseekModel,
     deepseekBaseUrl: s.deepseekBaseUrl,
     comfyUrl: s.comfyUrl,
+    reviewGenerations: s.reviewGenerations !== false,
     deepseekKeySet: Boolean(s.deepseekApiKey),
     deepseekKeyMasked: maskKey(s.deepseekApiKey),
   };
@@ -48,6 +51,11 @@ export function updateSettings(patch) {
   const next = { ...getSettings() };
   for (const key of Object.keys(DEFAULTS)) {
     if (patch[key] === undefined) continue;
+    if (typeof DEFAULTS[key] === 'boolean') {
+      if (typeof patch[key] !== 'boolean') throw new Error(`${key} precisa ser verdadeiro ou falso`);
+      next[key] = patch[key];
+      continue;
+    }
     if (typeof patch[key] !== 'string') throw new Error(`${key} precisa ser texto`);
     next[key] = patch[key].trim();
   }

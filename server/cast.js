@@ -115,7 +115,12 @@ export function placeCharacters(desc, inputs, characters, prompt) {
     text = text.replace(new RegExp(`@\\{?${escape(c.name)}\\}?(?![\\p{L}\\p{N}])`, 'giu'), tag(n));
   }
   const block = placed.map(({ c, n }) => `${tag(n)} is ${c.name}: ${c.brief}`).join('\n');
-  const head = `Characters — keep each one exactly as in their reference picture: same height and body proportions, build, face, hair, facial hair, glasses and outfit. Do not change anyone's body type.\n${block}`;
+  // "Uma vez só": pedindo um ângulo diferente do da foto (ex.: de costas), o modelo de
+  // imagem desenhou o personagem no ângulo pedido E de novo na pose da foto.
+  const once = placed.length === 1
+    ? `${placed[0].c.name} appears exactly once in the picture, only in the pose and angle described below, never a second time in the pose of the reference picture.`
+    : `Each of these ${placed.length} characters appears exactly once in the picture, only in the pose and angle described below — never draw anyone twice, and never add an extra copy in the pose of their reference picture.`;
+  const head = `Characters — keep each one exactly as in their reference picture: same height and body proportions, build, face, hair, facial hair, glasses and outfit. Do not change anyone's body type.\n${block}\n${once}`;
   return { slots, extra, prompt: `${head}\n\n${text}`, refs: placed.map(({ c, n }) => ({ name: c.name, n })) };
 }
 

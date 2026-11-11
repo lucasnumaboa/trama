@@ -4,6 +4,8 @@ import * as comfy from './comfy.js';
 import { describeByName, runWorkflow } from './exec.js';
 import { editMedia, mediaInfo, OPERATIONS, SINGLE_INPUT_OPS, NoChange } from './media.js';
 import { readImage, readVideo, readPeople, findPerson, describeCharacter } from './vision.js';
+import { reviewGeneration } from './review.js';
+import { getSettings } from './settings.js';
 import { swapVideo, planChunks, matchPerson, DEFAULT_CHUNK, MAX_CHUNK, SWAP_WORKFLOW } from './swap.js';
 import { castOf, findCharacter, upsertCharacter, removeCharacter, mentionedCharacters, placeCharacters } from './cast.js';
 import {
@@ -566,11 +568,46 @@ async function generate(ctx, { name, values = {}, inputs = {}, characters = [], 
     const durField = durationField(d);
     const asked = durField ? Number(resolved[durField.id] ?? durField.default) : undefined;
     const { checks, warnings } = await inspectAll(created, { expect: Number.isFinite(asked) && asked > 0 ? { duration: asked } : {} });
-    return { label, assetIds: created.map((a) => a.id), warnings, result: { ok: true, created: created.map(describeAsset), seeds, checks, warnings, ...(notices.length ? { notes: notices } : {}) } };
+    const review = await triage(ctx, created[0], { request: mainText, characters: cast.map((c) => c.name), check: checks.find((c) => c.id === created[0]?.id) });
+    if (review?.problems?.length) warnings.push(...review.problems.map((x) => `Triagem de "${created[0].title}": ${x}`));
+    return {
+      label,
+      assetIds: created.map((a) => a.id),
+      warnings,
+      result: { ok: true, created: created.map(describeAsset), seeds, checks, warnings, ...(review ? { review } : {}), ...(notices.length ? { notes: notices } : {}) },
+    };
   } catch (error) {
     if (reviseId) updateAsset(p, target.id, { status: target.file ? 'ready' : previous.status, error: target.file ? undefined : previous.error, detail: '', progress: 1 }, { persist: true });
     else updateAsset(p, target.id, { status: 'error', error: error.message, detail: '' }, { persist: true });
     throw error;
+  }
+}
+
+// ---- Triagem -------------------------------------------------------------------
+/**
+ * Confere se a imagem/vídeo gerado bate com o pedido (visão local + DeepSeek). Não
+ * derruba a geração: se a triagem falhar, devolve { skipped } e segue.
+ */
+async function triage(ctx, asset, { request, characters, check }) {
+  if (!asset || !['image', 'video'].includes(asset.kind) || getSettings().reviewGenerations === false) return null;
+  const p = ctx.project;
+  updateAsset(p, asset.id, { detail: 'Conferindo se saiu como pedido' });
+  try {
+    const r = await reviewGeneration(asset, { request, characters, width: check?.width, height: check?.height, signal: ctx.signal });
+    updateAsset(p, asset.id, { detail: '', vision: r.seen, review: { ok: r.ok, problems: r.problems, minor: r.minor } }, { persist: true });
+    return {
+      ok: r.ok,
+      problems: r.problems,
+      ...(r.minor?.length
+        ? { minor: r.minor, minor_note: 'Problemas menores: a cena serve. Mencione ao usuário em meia frase; refaça só se ele pedir ou se atrapalhar a próxima cena.' }
+        : {}),
+      seen: clip(r.seen, 900),
+      ...(r.ok ? {} : { next: 'A triagem reprovou: conte ao usuário o que saiu errado e refaça com revise_asset corrigindo o prompt (ex.: deixar claro quantas pessoas, cada personagem uma vez, o formato) antes de usar esse card em outra cena.' }),
+    };
+  } catch (error) {
+    if (ctx.signal?.aborted) throw error;
+    updateAsset(p, asset.id, { detail: '' });
+    return { skipped: `a triagem não rodou: ${error.message}` };
   }
 }
 

@@ -6,6 +6,7 @@ export default function Settings({ settings, onClose, onSaved }) {
   const [model, setModel] = useState(settings?.deepseekModel || '');
   const [baseUrl, setBaseUrl] = useState(settings?.deepseekBaseUrl || '');
   const [comfyUrl, setComfyUrl] = useState(settings?.comfyUrl || '');
+  const [review, setReview] = useState(settings?.reviewGenerations !== false);
   const [models, setModels] = useState([]);
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
@@ -89,7 +90,7 @@ export default function Settings({ settings, onClose, onSaved }) {
   async function save(extra = {}) {
     setSaving(true);
     try {
-      const patch = { deepseekModel: model, deepseekBaseUrl: baseUrl, comfyUrl, ...extra };
+      const patch = { deepseekModel: model, deepseekBaseUrl: baseUrl, comfyUrl, reviewGenerations: review, ...extra };
       if (key.trim()) patch.deepseekApiKey = key.trim();
       const next = await api.saveSettings(patch);
       setKey('');
@@ -158,6 +159,13 @@ export default function Settings({ settings, onClose, onSaved }) {
           <label className="field">
             <span>Endereço do ComfyUI</span>
             <input value={comfyUrl} onChange={(e) => setComfyUrl(e.target.value)} />
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={review} onChange={(e) => setReview(e.target.checked)} />
+            <span>
+              Conferir cada imagem e vídeo gerado
+              <small>O modelo de visão descreve o resultado e o DeepSeek compara com o pedido (pessoa duplicada ou faltando, formato errado). Leva 1 a 3 minutos a mais por geração.</small>
+            </span>
           </label>
           <p className="hint">
             Os workflows, modelos e LoRAs são lidos direto do ComfyUI. O agente escolhe qual usar; se quiser outro modelo ou LoRA, peça no chat.
