@@ -78,6 +78,8 @@ function stepIcon(part) {
   const t = part.tool || '';
   if (t === 'run_workflow' || t === 'revise_asset') return 'sparkle';
   if (t === 'edit_media') return 'scissors';
+  if (t === 'swap_character') return 'swap';
+  if (t === 'video_people' || t === 'look_at') return 'eye';
   if (t === 'create_text' || t === 'update_text' || t === 'read_text') return 'text';
   if (t.includes('workflow')) return 'flow';
   if (t === 'media_info') return 'search';

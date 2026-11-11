@@ -26,7 +26,15 @@ export function listProjects() {
       try {
         const p = getProject(f.slice(0, -5));
         const cover = [...p.assets].reverse().find((a) => a.status === 'ready' && (a.kind === 'image' || a.kind === 'video'));
-        return { id: p.id, title: p.title, updatedAt: p.updatedAt, assets: p.assets.length, cover: cover ? { kind: cover.kind, file: cover.file } : null };
+        return {
+          id: p.id,
+          title: p.title,
+          updatedAt: p.updatedAt,
+          assets: p.assets.length,
+          cover: cover ? { kind: cover.kind, file: cover.file } : null,
+          folder: p.folder || null,
+          archived: Boolean(p.archived),
+        };
       } catch {
         return null;
       }
@@ -63,8 +71,9 @@ export function createProject(title = 'Novo projeto') {
   return p;
 }
 
-export function saveProject(p) {
-  p.updatedAt = Date.now();
+/** touch: false guarda sem mudar a data (arquivar ou mover de pasta não sobe o projeto na lista). */
+export function saveProject(p, { touch = true } = {}) {
+  if (touch) p.updatedAt = Date.now();
   fs.mkdirSync(DIR, { recursive: true });
   const tmp = `${file(p.id)}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(p, null, 1));
@@ -75,6 +84,56 @@ export function deleteProject(id) {
   cache.delete(id);
   const f = file(id);
   if (fs.existsSync(f)) fs.unlinkSync(f);
+}
+
+// ---- Pastas da barra lateral (data/folders.json) ----
+const FOLDERS = path.join(DATA_DIR, 'folders.json');
+
+export function listFolders() {
+  try {
+    const list = JSON.parse(fs.readFileSync(FOLDERS, 'utf8'));
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveFolders(list) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(`${FOLDERS}.tmp`, JSON.stringify(list, null, 1));
+  fs.renameSync(`${FOLDERS}.tmp`, FOLDERS);
+}
+
+const folderName = (name) => {
+  const n = String(name || '').trim().slice(0, 60);
+  if (!n) throw Object.assign(new Error('Dê um nome para a pasta'), { status: 400 });
+  return n;
+};
+
+export function createFolder(name) {
+  const f = { id: shortId('fld'), name: folderName(name), createdAt: Date.now() };
+  saveFolders([...listFolders(), f]);
+  return f;
+}
+
+export function renameFolder(id, name) {
+  const list = listFolders();
+  const f = list.find((x) => x.id === id);
+  if (!f) throw Object.assign(new Error('Pasta não encontrada'), { status: 404 });
+  f.name = folderName(name);
+  saveFolders(list);
+  return f;
+}
+
+/** Apaga só a pasta: os projetos dela voltam para a lista solta. */
+export function deleteFolder(id) {
+  saveFolders(listFolders().filter((x) => x.id !== id));
+  for (const item of listProjects()) {
+    if (item.folder !== id) continue;
+    const p = getProject(item.id);
+    delete p.folder;
+    saveProject(p, { touch: false });
+  }
 }
 
 /** Envia um evento para quem está olhando o projeto (SSE). */

@@ -3,7 +3,8 @@
 import * as comfy from './comfy.js';
 import { describeByName, runWorkflow } from './exec.js';
 import { editMedia, mediaInfo, OPERATIONS, SINGLE_INPUT_OPS, NoChange } from './media.js';
-import { readImage, readVideo, describeCharacter } from './vision.js';
+import { readImage, readVideo, readPeople, describeCharacter } from './vision.js';
+import { swapVideo, planChunks, matchPerson, DEFAULT_CHUNK, MAX_CHUNK, SWAP_WORKFLOW } from './swap.js';
 import { castOf, findCharacter, upsertCharacter, removeCharacter, mentionedCharacters, placeCharacters } from './cast.js';
 import {
   addAsset, updateAsset, saveProject, describeAsset, addEdge, emit, placeBelow, addVersion, selectVersion, removeAsset,
@@ -136,6 +137,42 @@ Nas operações de um arquivo só, o resultado vira uma NOVA VERSÃO do mesmo ca
     parameters: { type: 'object', properties: { asset_id: { type: 'string' }, refresh: { type: 'boolean', description: 'true para olhar de novo (ex.: a imagem ganhou nova versão)' } }, required: ['asset_id'] },
   },
   {
+    name: 'video_people',
+    description:
+      'Descobre quem aparece num vídeo: o modelo de visão olha seis quadros e devolve cada pessoa distinta (P1, P2…) com um rótulo em inglês para usar no prompt, aparência, onde fica no quadro e o que faz. Também põe no canvas uma imagem com os seis quadros, para o usuário ver de quem se fala. Use antes de swap_character.',
+    parameters: { type: 'object', properties: { asset_id: { type: 'string', description: 'Card do vídeo' }, refresh: { type: 'boolean' } }, required: ['asset_id'] },
+  },
+  {
+    name: 'swap_character',
+    description:
+      `Troca pessoas de um vídeo pelas pessoas das fotos (workflow ${SWAP_WORKFLOW}: MiniMax H3 com a LoRA de troca de personagem). Mantém câmera, fundo, luz, movimento, falas e as outras pessoas; o som é o do vídeo original. Vídeos maiores que o bloco (padrão ${DEFAULT_CHUNK} s, até ${MAX_CHUNK} s) são cortados em blocos e cada bloco usa a mesma foto, o mesmo prompt e a mesma seed, para o personagem novo ficar igual do começo ao fim. Várias trocas no mesmo vídeo: passe todas em swaps; elas rodam uma depois da outra. Demora: cerca de 25 a 40 min por bloco por troca.`,
+    parameters: {
+      type: 'object',
+      properties: {
+        video_id: { type: 'string', description: 'Card do vídeo de origem' },
+        swaps: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 4,
+          items: {
+            type: 'object',
+            properties: {
+              target: { type: 'string', description: 'Quem sai, em inglês, como o rótulo do video_people (ex.: "the bald man in the blue apron")' },
+              photo_id: { type: 'string', description: 'Card da foto de quem entra' },
+              character: { type: 'string', description: 'Ou o nome de um personagem do elenco (usa a foto e a ficha dele)' },
+            },
+            required: ['target'],
+          },
+        },
+        chunk_seconds: { type: 'number', description: `Tamanho máximo de cada bloco, 2 a ${MAX_CHUNK} s (padrão ${DEFAULT_CHUNK})` },
+        fidelity: { type: 'string', enum: ['match', 'max'], description: '"max" segura melhor o rosto da foto, mas fica bem mais lento. Padrão "match".' },
+        seed: { type: 'number', description: 'Opcional; sem ela o Trama sorteia uma e usa a mesma em todos os blocos' },
+        title: { type: 'string' },
+      },
+      required: ['video_id', 'swaps'],
+    },
+  },
+  {
     name: 'media_info',
     description:
       'Mede uma mídia: resolução, duração, fps, tamanho em MB, se tem áudio, onde o som começa e acaba (silêncio), borda uniforme em volta e cor dominante, além de avisos. Use antes de editar quando precisar desses números.',
@@ -223,6 +260,11 @@ export async function workflowCatalog() {
       const ins = d.mediaInputs.map((m) => `${KIND_PT[m.kind]} "${m.title}"`).join(' + ') || 'só texto';
       const outs = [...new Set(d.outputs.map((o) => KIND_PT[o.kind] || o.kind))].join(', ');
       const about = clip(d.notes.join(' ').replace(/\s+/g, ' ').replace(/[#*`>]/g, '').trim(), 220);
+      if (d.name === SWAP_WORKFLOW) {
+        // A troca roda pela ferramenta própria (blocos, 24 fps, seed fixa, som original).
+        lines.push(`- ${d.name}: troca uma pessoa de um vídeo pela pessoa de uma foto. Não chame com run_workflow: use video_people e swap_character.`);
+        continue;
+      }
       lines.push(`- ${d.name}: ${ins} → ${outs}. ${refCapacity(d)}${about ? ` ${about}` : ''}`);
     } catch (e) {
       lines.push(`- ${w.name}: indisponível (${clip(e.message, 120)})`);
@@ -524,6 +566,127 @@ async function generate(ctx, { name, values = {}, inputs = {}, characters = [], 
   }
 }
 
+// ---- Troca de personagem em vídeo ---------------------------------------------
+async function swapCharacter(ctx, args, { reviseId, note } = {}) {
+  const p = ctx.project;
+  const video = findAsset(p, args.video_id);
+  if (video.kind !== 'video' || !video.file) throw new Error('video_id precisa ser um card de vídeo.');
+  if (video.status === 'generating') throw new Error('Esse vídeo ainda está gerando.');
+  const swaps = (args.swaps || []).map((s, i) => {
+    const target = String(s.target || '').trim();
+    if (!target) throw new Error(`Troca ${i + 1}: diga quem sai do vídeo (target).`);
+    if (s.character) {
+      const c = findCharacter(p, s.character);
+      if (!c) throw new Error(`"${s.character}" não está no elenco. Elenco: ${castOf(p).map((x) => x.name).join(', ') || 'vazio'}.`);
+      const a = findAsset(p, c.assetId);
+      return { target, photo: a.file, photoId: a.id, brief: c.brief, label: c.name };
+    }
+    if (!s.photo_id) throw new Error(`Troca ${i + 1}: passe photo_id (a foto de quem entra) ou character.`);
+    const a = findAsset(p, s.photo_id);
+    if (a.kind !== 'image' || !a.file) throw new Error(`Troca ${i + 1}: ${s.photo_id} não é uma imagem.`);
+    return { target, photo: a.file, photoId: a.id, brief: a.characterSheet?.brief, label: a.title };
+  });
+  if (!swaps.length) throw new Error('Passe ao menos uma troca em swaps.');
+  // Com a lista do video_people: onde está quem sai e quem fica (vai nomeado no prompt).
+  const people = video.people?.list || [];
+  const targets = swaps.map((s) => matchPerson(people, s.target));
+  swaps.forEach((s, i) => {
+    if (targets[i]?.where) s.where = targets[i].where;
+    s.others = people.filter((x) => !targets.includes(x)).map((x) => x.label);
+  });
+  const seed = Number.isFinite(Number(args.seed)) ? Math.round(Number(args.seed)) : Math.floor(Math.random() * 2 ** 40);
+  const fidelity = args.fidelity === 'max' ? 'max' : 'match';
+  const recipe = { tool: 'swap_character', args: { video_id: video.id, swaps: args.swaps, chunk_seconds: args.chunk_seconds, fidelity, seed } };
+  const inputIds = [video.id, ...swaps.map((s) => s.photoId)];
+
+  let target;
+  let previous;
+  if (reviseId) {
+    target = findAsset(p, reviseId);
+    previous = { status: target.status, error: target.error };
+    updateAsset(p, target.id, { status: 'generating', progress: 0, detail: 'Preparando a troca' });
+  } else {
+    const title = args.title || `${video.title} — ${swaps.map((s) => s.label).join(', ')}`;
+    target = addAsset(p, { kind: 'video', title, status: 'generating', progress: 0, detail: 'Preparando a troca', workflow: SWAP_WORKFLOW }, [...new Set(inputIds)]);
+  }
+  saveProject(p);
+  const doing = `Trocando ${swaps.map((s) => s.label).join(' e ')} em "${video.title}"`;
+  ctx.step({ label: doing, assetIds: [target.id] });
+
+  let last = 0;
+  try {
+    const r = await swapVideo({
+      source: video.file,
+      swaps,
+      seed,
+      chunkSeconds: args.chunk_seconds,
+      fidelity,
+      signal: ctx.signal,
+      // A estimativa aparece no passo do chat: a troca leva dezenas de minutos por bloco.
+      onPlan: ({ chunks, runs }) => {
+        const lo = runs * 25;
+        const hi = runs * 40;
+        const time = hi >= 120 ? `${Math.round(lo / 60)} a ${Math.round(hi / 60)} h` : `${lo} a ${hi} min`;
+        ctx.step({ label: `${doing} · ${chunks.length === 1 ? '1 bloco' : `${chunks.length} blocos`}${swaps.length > 1 ? ` × ${swaps.length} trocas` : ''}, cerca de ${time}` });
+      },
+      onProgress: ({ progress, detail }) => {
+        const now = Date.now();
+        if (now - last < 250 && progress !== 1) return;
+        last = now;
+        updateAsset(p, target.id, { progress, detail });
+      },
+    });
+    const v = { file: r.file, kind: 'video', recipe, seeds: { seed }, prompt: r.prompts.join('\n\n'), workflow: SWAP_WORKFLOW };
+    let created;
+    if (reviseId) created = addVersion(p, target.id, { ...v, note: note || 'troca refeita' });
+    else {
+      updateAsset(p, target.id, { status: 'ready', progress: 1, detail: '' });
+      created = addVersion(p, target.id, { ...v, note: 'original' });
+    }
+    saveProject(p);
+    const { checks, warnings } = await inspectAll([created], { expect: { duration: r.info.duration } });
+    // Conferência: o modelo às vezes apaga quem devia sair e troca outra pessoa (ou
+    // some com alguém). Conta as pessoas do resultado e compara com as do original.
+    let peopleAfter;
+    if (people.length) {
+      try {
+        updateAsset(p, created.id, { detail: 'Conferindo quem ficou no vídeo' });
+        const after = await readPeople(created, { signal: ctx.signal });
+        peopleAfter = after.people;
+        updateAsset(p, created.id, { detail: '', people: { list: after.people, scene: after.scene } }, { persist: true });
+        if (after.people.length < people.length) {
+          warnings.push(`O original tem ${people.length} pessoas e o resultado tem ${after.people.length}: alguém sumiu ou foi trocado junto. Antes: ${people.map((x) => x.label).join('; ')}. Depois: ${after.people.map((x) => x.label).join('; ')}. Conte isso ao usuário e ofereça refazer.`);
+        }
+      } catch {
+        updateAsset(p, created.id, { detail: '' });
+      }
+    }
+    return {
+      label: `Trocou ${swaps.map((s) => s.label).join(' e ')} em "${video.title}"`,
+      assetIds: [created.id],
+      warnings,
+      result: {
+        ok: true,
+        created: [describeAsset(created)],
+        blocks: r.chunks.length,
+        block_seconds: r.chunks.map((c) => c.dur),
+        seed,
+        fidelity,
+        format: r.aspect,
+        people_before: people.map((x) => x.label),
+        ...(peopleAfter ? { people_after: peopleAfter.map((x) => x.label) } : {}),
+        checks,
+        warnings,
+        next: 'Compare people_before e people_after: diga ao usuário quem foi trocado e se alguém sumiu (não afirme que todos ficaram sem conferir). Olhe com look_at se precisar. Se o rosto mudar entre blocos, refaça com revise_asset e values {"fidelity": "max"}.',
+      },
+    };
+  } catch (error) {
+    if (reviseId) updateAsset(p, target.id, { status: target.file ? 'ready' : previous.status, error: target.file ? undefined : previous.error, detail: '', progress: 1 }, { persist: true });
+    else updateAsset(p, target.id, { status: 'error', error: error.message, detail: '' }, { persist: true });
+    throw error;
+  }
+}
+
 async function edit(ctx, args) {
   const p = ctx.project;
   const assets = (args.asset_ids || []).map((id) => findAsset(p, id));
@@ -663,6 +826,9 @@ export async function runTool(name, args, ctx) {
         // Refaz a edição com outras opções, a partir dos mesmos arquivos de origem.
         return edit(ctx, { operation: r.operation, asset_ids: r.inputs, ...r.options, ...(args.values || {}), as_version: false, note: args.note });
       }
+      if (r?.tool === 'swap_character') {
+        return swapCharacter(ctx, { ...r.args, ...(args.values || {}) }, { reviseId: a.id, note: args.note });
+      }
       if (r?.tool !== 'run_workflow') throw new Error('Esse card não foi gerado por workflow (é upload ou texto). Use edit_media para editar a mídia.');
       return generate(ctx, {
         name: r.workflow,
@@ -725,6 +891,47 @@ export async function runTool(name, args, ctx) {
       saveProject(p);
       return { label: `Olhou "${a.title}"`, result: { asset_id: a.id, title: a.title, description: a.vision } };
     }
+
+    case 'video_people': {
+      const a = findAsset(p, args.asset_id);
+      if (a.kind !== 'video' || !a.file) throw new Error('video_people olha vídeos; esse card não é vídeo.');
+      if (a.status === 'generating') throw new Error('Esse vídeo ainda está gerando.');
+      let framesId = a.peopleFramesId;
+      if (!a.people || args.refresh) {
+        ctx.step({ label: `Vendo quem aparece em "${a.title}"`, assetIds: [a.id] });
+        const r = await readPeople(a, { signal: ctx.signal });
+        if (!r.people.length) throw new Error(`O modelo de visão não listou pessoas neste vídeo. Resposta: ${clip(r.raw, 300)}`);
+        const frames = addAsset(p, { kind: 'image', title: `Quadros de ${a.title}`, file: r.frames, vision: r.raw }, [a.id]);
+        frames.versions = [{ id: 'v1', createdAt: Date.now(), note: 'original', file: r.frames, kind: 'image' }];
+        frames.current = 0;
+        framesId = frames.id;
+        updateAsset(p, a.id, { people: { list: r.people, scene: r.scene }, peopleFramesId: frames.id });
+        saveProject(p);
+      }
+      const { list, scene } = a.people;
+      let chunks = null;
+      try {
+        const info = await mediaInfo(a.file, 'video');
+        chunks = planChunks(info.duration).length;
+      } catch {
+        /* sem duração: segue sem a estimativa */
+      }
+      return {
+        label: `Viu ${list.length === 1 ? '1 pessoa' : `${list.length} pessoas`} em "${a.title}"`,
+        assetIds: framesId ? [a.id, framesId] : [a.id],
+        result: {
+          asset_id: a.id,
+          people: list,
+          scene,
+          frames_card: framesId,
+          ...(chunks ? { swap_blocks: chunks } : {}),
+          hint: list.length > 1 ? 'Mais de uma pessoa: se o pedido não diz quem sai, pergunte com ask_user antes de swap_character.' : undefined,
+        },
+      };
+    }
+
+    case 'swap_character':
+      return swapCharacter(ctx, args);
 
     case 'media_info': {
       const a = findAsset(p, args.asset_id);

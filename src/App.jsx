@@ -13,6 +13,7 @@ const HASH = new URLSearchParams(window.location.hash.slice(1));
 
 export default function App() {
   const [projects, setProjects] = useState([]);
+  const [folders, setFolders] = useState([]);
   const [currentId, setCurrentId] = useState(null);
   const [project, setProject] = useState(null);
   const [running, setRunning] = useState(false);
@@ -40,7 +41,17 @@ export default function App() {
     setToast(msg);
     setTimeout(() => setToast((t) => (t === msg ? '' : t)), 6000);
   }, []);
-  const refreshProjects = useCallback(() => api.projects().then((r) => setProjects(r.projects)).catch(() => {}), []);
+  const refreshProjects = useCallback(
+    () =>
+      api
+        .projects()
+        .then((r) => {
+          setProjects(r.projects);
+          setFolders(r.folders || []);
+        })
+        .catch(() => {}),
+    [],
+  );
 
   // Carga inicial
   useEffect(() => {
@@ -53,6 +64,7 @@ export default function App() {
     api.comfyStatus().then(setComfy).catch(() => setComfy({ ok: false }));
     api.projects().then(async (r) => {
       setProjects(r.projects);
+      setFolders(r.folders || []);
       const last = HASH.get('project') || localStorage.getItem(LAST);
       if (r.projects.some((p) => p.id === last)) setCurrentId(last);
       else if (r.projects.length) setCurrentId(r.projects[0].id);
@@ -148,6 +160,9 @@ export default function App() {
     <div className="app">
       <Sidebar
         projects={projects}
+        folders={folders}
+        onChanged={refreshProjects}
+        onError={say}
         currentId={currentId}
         onSelect={setCurrentId}
         onNew={newProject}

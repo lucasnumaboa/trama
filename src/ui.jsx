@@ -35,6 +35,11 @@ const PATHS = {
   zoomIn: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14z M21 21l-5-5 M11 8v6 M8 11h6',
   zoomOut: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14z M21 21l-5-5 M8 11h6',
   pointer: 'M5 3l14 8-6 2-2 6z',
+  pencil: 'M4 20h4L19 9l-4-4L4 16z M13.5 6.5l4 4',
+  archive: 'M3 5h18v4H3z M5 9v10h14V9 M10 13h4',
+  folderPlus: 'M4 7h6l2 2h8v9H4z M12 11.5v5 M9.5 14h5',
+  folderOut: 'M4 7h6l2 2h8v9H4z M15 13.5H9 M11.5 11L9 13.5l2.5 2.5',
+  swap: 'M7 7h11 M15 4l3 3-3 3 M17 17H6 M9 14l-3 3 3 3',
 };
 
 export function Icon({ name, size = 16, className = '', title }) {

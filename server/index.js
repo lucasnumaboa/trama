@@ -114,7 +114,13 @@ app.post('/api/comfy/reveal', wrap(async (req, res) => {
 }));
 
 // ---- Projetos ----
-app.get('/api/projects', (req, res) => res.json({ projects: projects.listProjects() }));
+app.get('/api/projects', (req, res) => res.json({ projects: projects.listProjects(), folders: projects.listFolders() }));
+app.post('/api/folders', wrap((req, res) => res.json(projects.createFolder(req.body?.name))));
+app.patch('/api/folders/:id', wrap((req, res) => res.json(projects.renameFolder(req.params.id, req.body?.name))));
+app.delete('/api/folders/:id', wrap((req, res) => {
+  projects.deleteFolder(req.params.id);
+  res.json({ ok: true });
+}));
 app.post('/api/projects', wrap((req, res) => res.json(projects.createProject(req.body?.title || 'Novo projeto'))));
 app.get('/api/projects/:id', wrap((req, res) => {
   const p = projects.getProject(req.params.id);
@@ -131,7 +137,19 @@ app.patch('/api/projects/:id', wrap((req, res) => {
     if (!modelInCategory(String(category), String(id))) return res.status(400).json({ error: 'Modelo inválido para essa categoria' });
     p.models = { ...(p.models || {}), [category]: id };
   }
-  projects.saveProject(p);
+  // Organização na barra lateral: não muda a data do projeto.
+  const touch = 'title' in (req.body || {}) || 'model' in (req.body || {});
+  if ('folder' in (req.body || {})) {
+    const folder = req.body.folder;
+    if (folder && !projects.listFolders().some((f) => f.id === folder)) return res.status(400).json({ error: 'Pasta não encontrada' });
+    if (folder) p.folder = folder;
+    else delete p.folder;
+  }
+  if ('archived' in (req.body || {})) {
+    if (req.body.archived) p.archived = true;
+    else delete p.archived;
+  }
+  projects.saveProject(p, { touch });
   projects.emit(p.id, { type: 'project', title: p.title });
   res.json({ ok: true });
 }));

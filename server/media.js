@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import * as comfy from './comfy.js';
 
-function run(cmd, args, signal) {
+export function run(cmd, args, signal) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { windowsHide: true });
     let out = '';
@@ -151,7 +151,7 @@ export async function probe(file) {
   };
 }
 
-async function download(file, dir) {
+export async function download(file, dir) {
   const res = await comfy.fetchFile(file);
   const ext = path.extname(file.filename) || '.bin';
   const local = path.join(dir, `${randomUUID()}${ext}`);
@@ -159,7 +159,7 @@ async function download(file, dir) {
   return local;
 }
 
-async function publish(localPath) {
+export async function publish(localPath) {
   const buffer = fs.readFileSync(localPath);
   const hash = createHash('sha1').update(buffer).digest('hex').slice(0, 12);
   const name = await comfy.uploadInput(buffer, `trama_${hash}${path.extname(localPath)}`);
@@ -167,21 +167,36 @@ async function publish(localPath) {
 }
 
 /**
- * Três quadros de um vídeo (início, meio, fim) lado a lado numa imagem, enviada para
- * a pasta input do ComfyUI. Serve para o modelo de visão "olhar" um vídeo.
+ * Quadros de um vídeo numa imagem só, enviada para a pasta input do ComfyUI.
+ * Serve para o modelo de visão "olhar" um vídeo.
+ * - padrão: três quadros (início, meio, fim) lado a lado;
+ * - count 6 com rows 2: seis quadros em duas fileiras, em ordem (para achar as pessoas).
  */
-export async function videoFrames(file, signal) {
+export async function videoFrames(file, signal, { count = 3, rows = 1, height = 400 } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'trama-'));
   try {
     const src = await download(file, dir);
     const { duration } = await probe(src);
     const d = Number(duration) || 1;
-    const times = [0.12, 0.5, 0.88].map((f) => (d * f).toFixed(2));
+    // Distribui os quadros entre 8% e 92% do vídeo (evita o primeiro e o último, que costumam ser transição).
+    const times = count === 3 ? [0.12, 0.5, 0.88] : Array.from({ length: count }, (_, i) => 0.08 + (0.84 * i) / Math.max(1, count - 1));
+    const at = times.map((f) => (d * f).toFixed(2));
     const target = path.join(dir, `frames-${randomUUID()}.png`);
-    const inputs = times.flatMap((t) => ['-ss', t, '-i', src]);
-    const scale = times.map((_, i) => `[${i}:v]scale=-2:400,setsar=1[f${i}]`).join(';');
-    const graph = `${scale};${times.map((_, i) => `[f${i}]`).join('')}hstack=inputs=${times.length}[out]`;
-    await run('ffmpeg', ['-y', '-hide_banner', '-v', 'error', ...inputs, '-filter_complex', graph, '-map', '[out]', '-frames:v', '1', target], signal);
+    const inputs = at.flatMap((t) => ['-ss', t, '-i', src]);
+    // Sem números nos quadros: o drawtext do ffmpeg precisa de fontconfig, que falta no Windows.
+    const scale = at.map((_, i) => `[${i}:v]scale=-2:${height},setsar=1[f${i}]`).join(';');
+    const perRow = Math.ceil(at.length / rows);
+    const rowLabels = [];
+    const parts = [scale];
+    for (let r = 0; r < rows; r++) {
+      const ids = at.map((_, i) => i).slice(r * perRow, (r + 1) * perRow);
+      if (!ids.length) break;
+      const name = rows === 1 ? 'out' : `r${r}`;
+      parts.push(ids.length > 1 ? `${ids.map((i) => `[f${i}]`).join('')}hstack=inputs=${ids.length}[${name}]` : `[f${ids[0]}]null[${name}]`);
+      rowLabels.push(`[${name}]`);
+    }
+    if (rows > 1) parts.push(`${rowLabels.join('')}vstack=inputs=${rowLabels.length}[out]`);
+    await run('ffmpeg', ['-y', '-hide_banner', '-v', 'error', ...inputs, '-filter_complex', parts.join(';'), '-map', '[out]', '-frames:v', '1', target], signal);
     return publish(target);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -238,7 +253,7 @@ function atempoChain(factor) {
   return parts.join(',');
 }
 
-const VIDEO_ENC = ['-c:v', 'libx264', '-crf', '18', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-movflags', '+faststart'];
+export const VIDEO_ENC = ['-c:v', 'libx264', '-crf', '18', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-movflags', '+faststart'];
 
 /**
  * @param {string} op

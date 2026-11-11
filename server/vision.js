@@ -109,6 +109,42 @@ export async function readVideo(asset, { signal } = {}) {
   return ask({ file: frames }, VIDEO_ASK, { signal, maxLength: 1200 });
 }
 
+// Pessoas de um vídeo: seis quadros em duas fileiras, para a troca de personagem.
+const PEOPLE_ASK = `This picture shows six frames of one video in time order: top row left to right (frames 1-3), then bottom row left to right (frames 4-6).
+List every DISTINCT person (or character) who appears, including people only partly visible at the edges of the frame, counting the same person only once even if they move or turn.
+For each one write exactly one line:
+PERSON <n>: <short English label that tells them apart in a prompt, e.g. "the bald man in the blue apron"> | <gender, approximate age, build, skin tone, hair, facial hair, glasses, clothes> | <where they usually are in the frame> | <frames where they appear, e.g. 1,2,5> | <what they do>
+Then one line starting with "SCENE:" describing the place and the camera in under 40 words.
+Factual, no names, no extra text.`;
+
+/** Separa as linhas PERSON n: ... | ... em objetos. */
+export function parsePeople(text) {
+  const people = [];
+  for (const line of String(text).split('\n')) {
+    const m = line.replace(/\*+/g, '').match(/^\s*PERSON\s*(\d+)\s*[:.-]\s*(.+)$/i);
+    if (!m) continue;
+    const [label, looks, where, frames, action] = m[2].split('|').map((x) => x.trim());
+    if (!label) continue;
+    people.push({
+      id: `P${m[1]}`,
+      label: label.replace(/^["']|["']$/g, ''),
+      looks: looks || '',
+      where: where || '',
+      frames: (frames || '').match(/\d/g)?.map(Number) || [],
+      action: action || '',
+    });
+  }
+  const scene = String(text).match(/^\s*\**SCENE\**\s*:\s*(.+)$/im)?.[1]?.trim() || '';
+  return { people, scene };
+}
+
+/** Lê quem aparece num vídeo. Devolve { people, scene, frames (arquivo da imagem dos quadros), raw }. */
+export async function readPeople(asset, { signal } = {}) {
+  const frames = await videoFrames(asset.file, signal, { count: 6, rows: 2, height: 300 });
+  const raw = await ask({ file: frames }, PEOPLE_ASK, { signal, maxLength: 1200 });
+  return { ...parsePeople(raw), frames, raw };
+}
+
 export const describeImage = async (asset, opts) => (await readImage(asset, opts)).vision;
 
 /**
