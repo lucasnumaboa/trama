@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, fileUrl, downloadFile } from './api.js';
 import { Icon, KIND_LABEL } from './ui.jsx';
+import { getVolume, saveVolume } from './volume.js';
 
 export function WorkflowsModal({ onClose }) {
   const [list, setList] = useState(null);
@@ -92,7 +93,15 @@ export function PreviewModal({ asset, onClose, onSaveText, onVersion }) {
         {revealError && <div className="msg-error">{revealError}</div>}
         <div className="preview-body">
           {asset.kind === 'image' && <img src={url} alt={asset.title} />}
-          {asset.kind === 'video' && <video src={url} controls autoPlay />}
+          {asset.kind === 'video' && (
+            <video
+              src={url}
+              controls
+              autoPlay
+              ref={(v) => v && (v.volume = getVolume())}
+              onVolumeChange={(e) => !e.currentTarget.muted && saveVolume(e.currentTarget.volume)}
+            />
+          )}
           {asset.kind === 'audio' && <audio src={url} controls autoPlay />}
           {asset.kind === 'text' && (
             <>

@@ -3,6 +3,7 @@ import { ReactFlow, Background, MiniMap, Handle, Position, useReactFlow, useView
 import '@xyflow/react/dist/style.css';
 import { api, fileUrl, downloadFile } from './api.js';
 import { Icon, KIND_LABEL } from './ui.jsx';
+import { getVolume, saveVolume } from './volume.js';
 
 function VersionSwitch({ asset, onVersion }) {
   const n = asset.versions?.length || 0;
@@ -28,7 +29,8 @@ function VersionSwitch({ asset, onVersion }) {
 const fmtDuration = (s) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}` : '');
 
 /**
- * Vídeo com selo de duração. Toca sem som ao passar o mouse; o botão liga o som.
+ * Vídeo com selo de duração. Toca sem som ao passar o mouse; o botão liga o som
+ * e a barra ao lado ajusta o volume (o mesmo para todos os vídeos, lembrado).
  * Sem os controles nativos no card: eles capturavam o clique e o card não arrastava.
  * O player completo abre no duplo clique.
  */
@@ -37,7 +39,23 @@ function VideoBody({ url }) {
   const [duration, setDuration] = useState(null);
   const [hover, setHover] = useState(false);
   const [muted, setMuted] = useState(true);
+  const [volume, setVolume] = useState(getVolume);
   const [time, setTime] = useState(0);
+  const silent = muted || volume === 0;
+  useEffect(() => {
+    if (ref.current) ref.current.volume = volume;
+  }, [volume]);
+  const stop = (e) => e.stopPropagation();
+  const toggle = (e) => {
+    e.stopPropagation();
+    if (silent && volume === 0) changeVolume(0.5);
+    else setMuted(!muted);
+  };
+  const changeVolume = (v) => {
+    setVolume(v);
+    saveVolume(v);
+    if (v > 0) setMuted(false);
+  };
   const enter = () => {
     setHover(true);
     ref.current?.play().catch(() => {});
@@ -64,17 +82,22 @@ function VideoBody({ url }) {
       />
       {duration && <span className="dur-badge">{fmtDuration(hover ? Math.max(0, duration - time) : duration)}</span>}
       {hover ? (
-        <button
-          className="sound-btn nodrag"
-          title={muted ? 'Ligar o som' : 'Desligar o som'}
-          onClick={(e) => {
-            e.stopPropagation();
-            setMuted((m) => !m);
-          }}
-          onDoubleClick={(e) => e.stopPropagation()}
-        >
-          <Icon name={muted ? 'mute' : 'volume'} size={13} />
-        </button>
+        <div className="sound-ctl nodrag nowheel" onClick={stop} onDoubleClick={stop} onPointerDown={stop}>
+          <button className="sound-btn" title={silent ? 'Ligar o som' : 'Desligar o som'} onClick={toggle}>
+            <Icon name={silent ? 'mute' : 'volume'} size={13} />
+          </button>
+          <input
+            type="range"
+            className="sound-range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={silent ? 0 : volume}
+            title={`Volume ${Math.round((silent ? 0 : volume) * 100)}%`}
+            style={{ '--fill': `${(silent ? 0 : volume) * 100}%` }}
+            onChange={(e) => changeVolume(parseFloat(e.target.value))}
+          />
+        </div>
       ) : (
         <span className="play-badge">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
