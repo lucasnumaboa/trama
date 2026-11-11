@@ -167,12 +167,36 @@ export async function publish(localPath) {
 }
 
 /**
+ * Filtro do ffmpeg que monta os quadros numa imagem: `n` entradas de vídeo (0..n-1) em
+ * `rows` fileiras de altura `height`. Com `lead`, a entrada n (uma foto) vai à esquerda,
+ * na altura da grade inteira, separada por uma faixa preta.
+ * Sem números nos quadros: o drawtext do ffmpeg precisa de fontconfig, que falta no Windows.
+ */
+export function framesGraph(n, { rows = 1, height = 400, lead = false } = {}) {
+  const parts = [Array.from({ length: n }, (_, i) => `[${i}:v]scale=-2:${height},setsar=1[f${i}]`).join(';')];
+  const perRow = Math.ceil(n / rows);
+  const rowLabels = [];
+  const gridName = lead ? 'grid' : 'out';
+  for (let r = 0; r < rows; r++) {
+    const ids = Array.from({ length: n }, (_, i) => i).slice(r * perRow, (r + 1) * perRow);
+    if (!ids.length) break;
+    const name = rows === 1 ? gridName : `r${r}`;
+    parts.push(ids.length > 1 ? `${ids.map((i) => `[f${i}]`).join('')}hstack=inputs=${ids.length}[${name}]` : `[f${ids[0]}]null[${name}]`);
+    rowLabels.push(`[${name}]`);
+  }
+  if (rows > 1) parts.push(`${rowLabels.join('')}vstack=inputs=${rowLabels.length}[${gridName}]`);
+  if (lead) parts.push(`[${n}:v]scale=-2:${rows * height},setsar=1,pad=iw+24:ih:0:0:black[lead]`, '[lead][grid]hstack=inputs=2[out]');
+  return parts.join(';');
+}
+
+/**
  * Quadros de um vídeo numa imagem só, enviada para a pasta input do ComfyUI.
  * Serve para o modelo de visão "olhar" um vídeo.
  * - padrão: três quadros (início, meio, fim) lado a lado;
- * - count 6 com rows 2: seis quadros em duas fileiras, em ordem (para achar as pessoas).
+ * - count 6 com rows 2: seis quadros em duas fileiras, em ordem (para achar as pessoas);
+ * - lead: uma imagem (arquivo do ComfyUI) à esquerda dos quadros, para comparar com eles.
  */
-export async function videoFrames(file, signal, { count = 3, rows = 1, height = 400 } = {}) {
+export async function videoFrames(file, signal, { count = 3, rows = 1, height = 400, lead } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'trama-'));
   try {
     const src = await download(file, dir);
@@ -183,20 +207,9 @@ export async function videoFrames(file, signal, { count = 3, rows = 1, height = 
     const at = times.map((f) => (d * f).toFixed(2));
     const target = path.join(dir, `frames-${randomUUID()}.png`);
     const inputs = at.flatMap((t) => ['-ss', t, '-i', src]);
-    // Sem números nos quadros: o drawtext do ffmpeg precisa de fontconfig, que falta no Windows.
-    const scale = at.map((_, i) => `[${i}:v]scale=-2:${height},setsar=1[f${i}]`).join(';');
-    const perRow = Math.ceil(at.length / rows);
-    const rowLabels = [];
-    const parts = [scale];
-    for (let r = 0; r < rows; r++) {
-      const ids = at.map((_, i) => i).slice(r * perRow, (r + 1) * perRow);
-      if (!ids.length) break;
-      const name = rows === 1 ? 'out' : `r${r}`;
-      parts.push(ids.length > 1 ? `${ids.map((i) => `[f${i}]`).join('')}hstack=inputs=${ids.length}[${name}]` : `[f${ids[0]}]null[${name}]`);
-      rowLabels.push(`[${name}]`);
-    }
-    if (rows > 1) parts.push(`${rowLabels.join('')}vstack=inputs=${rowLabels.length}[out]`);
-    await run('ffmpeg', ['-y', '-hide_banner', '-v', 'error', ...inputs, '-filter_complex', parts.join(';'), '-map', '[out]', '-frames:v', '1', target], signal);
+    if (lead) inputs.push('-i', await download(lead, dir));
+    const graph = framesGraph(at.length, { rows, height, lead: Boolean(lead) });
+    await run('ffmpeg', ['-y', '-hide_banner', '-v', 'error', ...inputs, '-filter_complex', graph, '-map', '[out]', '-frames:v', '1', target], signal);
     return publish(target);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

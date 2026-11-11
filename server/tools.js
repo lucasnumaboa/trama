@@ -3,7 +3,7 @@
 import * as comfy from './comfy.js';
 import { describeByName, runWorkflow } from './exec.js';
 import { editMedia, mediaInfo, OPERATIONS, SINGLE_INPUT_OPS, NoChange } from './media.js';
-import { readImage, readVideo, readPeople, describeCharacter } from './vision.js';
+import { readImage, readVideo, readPeople, findPerson, describeCharacter } from './vision.js';
 import { swapVideo, planChunks, matchPerson, DEFAULT_CHUNK, MAX_CHUNK, SWAP_WORKFLOW } from './swap.js';
 import { castOf, findCharacter, upsertCharacter, removeCharacter, mentionedCharacters, placeCharacters } from './cast.js';
 import {
@@ -139,8 +139,16 @@ Nas operações de um arquivo só, o resultado vira uma NOVA VERSÃO do mesmo ca
   {
     name: 'video_people',
     description:
-      'Descobre quem aparece num vídeo: o modelo de visão olha seis quadros e devolve cada pessoa distinta (P1, P2…) com um rótulo em inglês para usar no prompt, aparência, onde fica no quadro e o que faz. Também põe no canvas uma imagem com os seis quadros, para o usuário ver de quem se fala. Use antes de swap_character.',
-    parameters: { type: 'object', properties: { asset_id: { type: 'string', description: 'Card do vídeo' }, refresh: { type: 'boolean' } }, required: ['asset_id'] },
+      'Descobre quem aparece num vídeo: o modelo de visão olha seis quadros e devolve cada pessoa distinta (P1, P2…) com um rótulo em inglês para usar no prompt, aparência, onde fica no quadro e o que faz. Também põe no canvas uma imagem com os seis quadros, para o usuário ver de quem se fala. Use antes de swap_character. Se o usuário apontou quem sai com uma foto (print do vídeo ou recorte da pessoa), passe essa foto em match_photo_id: o modelo de visão compara a foto com os quadros e diz qual pessoa do vídeo é ela (match).',
+    parameters: {
+      type: 'object',
+      properties: {
+        asset_id: { type: 'string', description: 'Card do vídeo' },
+        match_photo_id: { type: 'string', description: 'Card da foto de quem o usuário apontou no vídeo (quem sai), para achar essa pessoa entre as do vídeo' },
+        refresh: { type: 'boolean' },
+      },
+      required: ['asset_id'],
+    },
   },
   {
     name: 'swap_character',
@@ -897,6 +905,9 @@ export async function runTool(name, args, ctx) {
       if (a.kind !== 'video' || !a.file) throw new Error('video_people olha vídeos; esse card não é vídeo.');
       if (a.status === 'generating') throw new Error('Esse vídeo ainda está gerando.');
       let framesId = a.peopleFramesId;
+      let match;
+      const photo = args.match_photo_id ? findAsset(p, args.match_photo_id) : null;
+      if (photo && (photo.kind !== 'image' || !photo.file)) throw new Error('match_photo_id precisa ser um card de imagem.');
       if (!a.people || args.refresh) {
         ctx.step({ label: `Vendo quem aparece em "${a.title}"`, assetIds: [a.id] });
         const r = await readPeople(a, { signal: ctx.signal });
@@ -909,6 +920,16 @@ export async function runTool(name, args, ctx) {
         saveProject(p);
       }
       const { list, scene } = a.people;
+      // Foto apontada: segunda leitura, que só escolhe na lista acima (mesmos rótulos e posições).
+      if (photo) {
+        ctx.step({ label: `Procurando "${photo.title}" em "${a.title}"`, assetIds: [a.id, photo.id] });
+        try {
+          match = (await findPerson(a, photo.file, list, { signal: ctx.signal })).match;
+        } catch (error) {
+          if (ctx.signal?.aborted) throw error;
+          match = { id: null, label: null, confidence: 'low', why: `a comparação falhou: ${error.message}` };
+        }
+      }
       let chunks = null;
       try {
         const info = await mediaInfo(a.file, 'video');
@@ -925,7 +946,17 @@ export async function runTool(name, args, ctx) {
           scene,
           frames_card: framesId,
           ...(chunks ? { swap_blocks: chunks } : {}),
-          hint: list.length > 1 ? 'Mais de uma pessoa: se o pedido não diz quem sai, pergunte com ask_user antes de swap_character.' : undefined,
+          ...(photo ? { match: match || { id: null, label: null, why: 'o modelo não respondeu a comparação' } } : {}),
+          hint: photo
+            // O modelo de visão local erra essa comparação até com "confiança alta" (num teste
+            // disse que o recorte de um homem magro com espada era o lutador de sumô). Uma
+            // troca leva meia hora: confirma sempre, com um clique.
+            ? match?.id
+              ? `Sugestão do modelo de visão: a foto apontada parece ser ${match.id} ("${match.label}"). Essa comparação erra com frequência: confirme com ask_user ("Quem sai do vídeo?"), com essa pessoa como primeira opção e as outras depois, antes de swap_character.`
+              : 'O modelo não achou a pessoa da foto no vídeo: pergunte com ask_user quem sai, com as pessoas como opções.'
+            : list.length > 1
+              ? 'Mais de uma pessoa: se o pedido não diz quem sai, pergunte com ask_user antes de swap_character.'
+              : undefined,
         },
       };
     }

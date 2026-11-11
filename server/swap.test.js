@@ -126,3 +126,39 @@ test('ffmpeg: corta em blocos a 24 fps e junta com o som original', async () => 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('lê qual pessoa bate com a foto apontada', async () => {
+  const { parseMatch, parsePeople } = await import('./vision.js');
+  const raw = `PERSON 1: the large sumo wrestler | male | center-left | 1,2 | stands
+PERSON 2: the man with glasses and blue robe | male | center | 1,2 | stands
+PERSON 3: the man with sword over shoulder | male | right | 1,2,3 | holds sword
+**MATCH:** PERSON 3 | curly dark hair, dark torn robe, sword over the shoulder
+SCENE: arena at night.`;
+  const { people } = parsePeople(raw);
+  assert.equal(people.length, 3, 'a linha MATCH não vira pessoa');
+  assert.deepEqual(parseMatch(raw, people), { id: 'P3', label: 'the man with sword over shoulder', confidence: null, why: 'curly dark hair, dark torn robe, sword over the shoulder' });
+  assert.deepEqual(parseMatch('MATCH: PERSON 2 | Medium confidence | glasses', people), { id: 'P2', label: 'the man with glasses and blue robe', confidence: 'medium', why: 'glasses' });
+  assert.deepEqual(parseMatch('PERSON 1: a | b\nMATCH: none | low | nobody has a beard', people.slice(0, 1)), { id: null, label: null, confidence: 'low', why: 'nobody has a beard' });
+  assert.equal(parseMatch('sem resposta', people), null);
+});
+
+test('ffmpeg: foto apontada à esquerda dos seis quadros', async () => {
+  const { framesGraph } = await import('./media.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'trama-frames-test-'));
+  try {
+    const vid = path.join(dir, 'v.mp4');
+    const img = path.join(dir, 'p.png');
+    await run('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=24:duration=3', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', vid]);
+    await run('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=red:s=250x480', '-frames:v', '1', img]);
+    const out = path.join(dir, 'grid.png');
+    const inputs = [0.3, 0.8, 1.3, 1.8, 2.3, 2.7].flatMap((t) => ['-ss', String(t), '-i', vid]);
+    await run('ffmpeg', ['-y', '-v', 'error', ...inputs, '-i', img, '-filter_complex', framesGraph(6, { rows: 2, height: 300, lead: true }), '-map', '[out]', '-frames:v', '1', out]);
+    const g = await probe(out);
+    // foto: 250x480 -> 312x600 (largura par) + faixa de 24; grade: 3 x 534 = 1602 de largura, 2 x 300 de altura.
+    assert.equal(g.height, 600);
+    assert.equal(g.width, 312 + 24 + 1602);
+    assert.match(framesGraph(3), /\[f0\]\[f1\]\[f2\]hstack=inputs=3\[out\]$/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -178,6 +178,8 @@ function ensureSocket() {
  * Devolve o registro de /history daquele prompt.
  */
 export async function runPrompt(prompt, { onEvent = () => {}, signal } = {}) {
+  // Parado antes de enfileirar: não manda nada (antes o prompt ia e ficava rodando sozinho).
+  if (signal?.aborted) throw new Error('Cancelado');
   ensureSocket();
   const submitted = await getJson('/prompt', {
     method: 'POST',
@@ -213,6 +215,8 @@ export async function runPrompt(prompt, { onEvent = () => {}, signal } = {}) {
     finished();
   };
   signal?.addEventListener('abort', onAbort, { once: true });
+  // Parado enquanto o POST estava no ar: o evento já passou, então cancela aqui.
+  if (signal?.aborted) onAbort();
 
   try {
     // Polling de /history como garantia (o WebSocket só acelera).

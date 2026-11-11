@@ -117,6 +117,30 @@ PERSON <n>: <short English label that tells them apart in a prompt, e.g. "the ba
 Then one line starting with "SCENE:" describing the place and the camera in under 40 words.
 Factual, no names, no extra text.`;
 
+// Com a foto de quem o usuário apontou: ela fica à esquerda dos quadros e o modelo
+// escolhe numa lista já feita (a da leitura sem a foto). Se a lista saísse desta mesma
+// leitura, as posições viriam erradas: "esquerda" passava a contar a foto.
+const MATCH_ASK = (people) => `On the LEFT, before the black stripe, is a REFERENCE picture of one person. On the RIGHT are six frames of one video in time order.
+These are the people in the video (positions are inside the video frames):
+${people.map((p) => `PERSON ${p.id.slice(1)}: ${p.label} | ${p.looks} | ${p.where}`).join('\n')}
+The REFERENCE is usually cropped from this same video, or another picture of one of these people, so it can be blurrier, cropped or in a different pose.
+Which of these people looks MOST like the reference (face, hair, facial hair, glasses, build, clothes, props, what they hold)? Always pick the closest one; do not demand that every detail matches. Answer with one line only:
+MATCH: PERSON <n> | <high, medium or low confidence> | <the traits that match>
+Write "MATCH: none | low | <why>" only if the reference clearly shows someone who is not in the video at all.`;
+
+/** A linha MATCH: PERSON n | confiança | motivo (a confiança pode faltar). */
+export function parseMatch(text, people) {
+  const m = String(text).replace(/\*+/g, '').match(/^\s*MATCH\s*:\s*(.+)$/im);
+  if (!m) return null;
+  const fields = m[1].split('|').map((x) => x.trim());
+  const who = fields.shift();
+  const confidence = /^(high|medium|low)\b/i.test(fields[0] || '') ? fields.shift().toLowerCase().match(/high|medium|low/)[0] : null;
+  const why = fields.join(' | ');
+  const n = who.match(/PERSON\s*(\d+)/i)?.[1] || (/^\d+$/.test(who) ? who : null);
+  const person = n ? people.find((x) => x.id === `P${n}`) : null;
+  return person ? { id: person.id, label: person.label, confidence, why } : { id: null, label: null, confidence: 'low', why: why || who };
+}
+
 /** Separa as linhas PERSON n: ... | ... em objetos. */
 export function parsePeople(text) {
   const people = [];
@@ -135,7 +159,15 @@ export function parsePeople(text) {
     });
   }
   const scene = String(text).match(/^\s*\**SCENE\**\s*:\s*(.+)$/im)?.[1]?.trim() || '';
-  return { people, scene };
+  // O modelo às vezes repete a mesma pessoa em várias linhas (mesmo rótulo e lugar).
+  const seen = new Set();
+  const unique = people.filter((p) => {
+    const key = `${p.label.toLowerCase()}|${p.where.toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return { people: unique, scene };
 }
 
 /** Lê quem aparece num vídeo. Devolve { people, scene, frames (arquivo da imagem dos quadros), raw }. */
@@ -143,6 +175,16 @@ export async function readPeople(asset, { signal } = {}) {
   const frames = await videoFrames(asset.file, signal, { count: 6, rows: 2, height: 300 });
   const raw = await ask({ file: frames }, PEOPLE_ASK, { signal, maxLength: 1200 });
   return { ...parsePeople(raw), frames, raw };
+}
+
+/**
+ * Qual das pessoas já lidas (readPeople) é a da foto que o usuário apontou.
+ * Devolve { id, label, confidence, why } (id null se ninguém bate), a imagem usada e a resposta.
+ */
+export async function findPerson(asset, photo, people, { signal } = {}) {
+  const frames = await videoFrames(asset.file, signal, { count: 6, rows: 2, height: 300, lead: photo });
+  const raw = await ask({ file: frames }, MATCH_ASK(people), { signal, maxLength: 300 });
+  return { match: parseMatch(raw, people), frames, raw };
 }
 
 export const describeImage = async (asset, opts) => (await readImage(asset, opts)).vision;
