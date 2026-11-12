@@ -411,13 +411,39 @@ export function resolveSlots(p, d, inputs = {}) {
     const hit =
       free.find((m) => m.nodeId === key.replace(/^media:/, '')) ||
       (byTitle.length === 1 ? byTitle[0] : undefined) ||
-      (/^(media|image|imagem|video|vídeo|audio|áudio|input|entrada)$/.test(key) ? free[0] : undefined);
+      (/^(media|image|imagem|video|vídeo|audio|áudio|input|entrada)$/.test(key) ? free[0] : undefined) ||
+      // Slot de outro workflow (ex.: "media:7" do H3 num workflow que só tem "media:470"):
+      // com uma única entrada livre do mesmo tipo não há dúvida.
+      (kind && free.length === 1 ? free[0] : undefined);
     if (!hit) {
       out[slot] = assetId; // o erro normal explica e lista os slots
       continue;
     }
     used.add(hit.id);
     out[hit.id] = assetId;
+  }
+  return out;
+}
+
+// Mesmo hábito nos campos: "prompt" ou "8.prompt" (id de outro workflow) em vez do
+// id deste. Vai para o campo certo quando só existe um candidato; o resto fica como veio.
+const PROMPT_ALIAS = /^(prompt|text|texto|positive|positive_prompt|instruction|instrucao|instrução)$/;
+export function resolveValues(d, values = {}) {
+  const ids = new Set(d.fields.map((f) => f.id));
+  const out = {};
+  for (const [k, v] of Object.entries(values)) if (ids.has(k)) out[k] = v;
+  const pf = promptField(d);
+  for (const [k, v] of Object.entries(values)) {
+    if (ids.has(k)) continue;
+    const input = String(k).trim().replace(/^[\d:]+\./, '').toLowerCase();
+    let target;
+    if (pf && PROMPT_ALIAS.test(input)) target = pf.id;
+    else {
+      const same = d.fields.filter((f) => !f.internal && f.input.toLowerCase() === input);
+      if (same.length === 1) target = same[0].id;
+    }
+    if (target && !(target in out)) out[target] = v;
+    else out[k] = v;
   }
   return out;
 }
@@ -435,6 +461,7 @@ async function generate(ctx, { name, values = {}, inputs = {}, characters = [], 
   const media = {};
   const inputIds = [];
   inputs = resolveSlots(p, d, inputs);
+  values = resolveValues(d, values);
   for (const [slot, assetId] of Object.entries(inputs)) {
     const a = findAsset(p, assetId);
     if (!a.file) throw new Error(`O asset ${assetId} não é um arquivo de mídia`);

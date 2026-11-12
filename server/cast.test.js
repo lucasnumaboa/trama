@@ -119,3 +119,28 @@ test('abbreviated slot names resolve to the workflow slot', async () => {
   // vídeo num workflow só de imagens: fica como veio e o erro normal explica
   assert.deepEqual(resolveSlots(p, d, { media: 'asset_v' }), { media: 'asset_v' });
 });
+
+test('slot and field names copied from another workflow land on this one when there is no doubt', async () => {
+  const { resolveSlots, resolveValues } = await import('./tools.js');
+  // Formato do trama_editar_imagem_qwen_2_1 (o object_info da fixture não tem os nós do Qwen 2.1).
+  const d = {
+    mediaInputs: [{ id: 'media:470', nodeId: '470', kind: 'image', title: 'Load Image' }],
+    fields: [
+      { id: '459:456.width', input: 'width', kind: 'number', nodeTitle: 'Latent' },
+      { id: '459:456.height', input: 'height', kind: 'number', nodeTitle: 'Latent' },
+      { id: '459:474.negative_prompt', input: 'negative_prompt', kind: 'text', nodeTitle: 'Encode' },
+      { id: '459:500.prompt', input: 'prompt', kind: 'text', nodeTitle: 'Generate Text' },
+    ],
+  };
+  const slot = 'media:470';
+  const pid = '459:500.prompt';
+  const p = { assets: [{ id: 'asset_a', kind: 'image' }, { id: 'asset_v', kind: 'video' }] };
+  // "media:7" é o slot do workflow H3; aqui só existe uma entrada de imagem
+  assert.deepEqual(resolveSlots(p, d, { 'media:7': 'asset_a' }), { [slot]: 'asset_a' });
+  // tipo errado continua como veio (o erro normal explica)
+  assert.deepEqual(resolveSlots(p, d, { 'media:7': 'asset_v' }), { 'media:7': 'asset_v' });
+  assert.deepEqual(resolveValues(d, { prompt: 'x' }), { [pid]: 'x' });
+  assert.deepEqual(resolveValues(d, { '8.prompt': 'x', '8.height': 576 }), { [pid]: 'x', '459:456.height': 576 });
+  // o id certo ganha de um apelido repetido; campo desconhecido fica como veio
+  assert.deepEqual(resolveValues(d, { [pid]: 'certo', prompt: 'apelido', '19.value': 5 }), { [pid]: 'certo', prompt: 'apelido', '19.value': 5 });
+});
