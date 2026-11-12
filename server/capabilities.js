@@ -36,7 +36,7 @@ const BUILTIN = [
   ['image_upscale', 'trama_ampliar_imagem.json', 'RealESRGAN 4x (imagem)'],
   ['image_background', 'trama_remover_fundo.json', 'BiRefNet'],
   ['video_create', 'trama_video_h3_texto.json', 'MiniMax H3 (texto → vídeo, com som)'],
-  ['video_create', 'minimax_h3_video_otimizado_3090.json', 'MiniMax H3 (imagem → vídeo, com som)'],
+  ['video_create', 'trama_video_h3_imagem.json', 'MiniMax H3 (imagem → vídeo, com som)'],
   ['video_create', 'trama_h3_primeiro_ultimo_quadro.json', 'MiniMax H3 (primeiro + último quadro; animar logo sem deformar)'],
   ['video_create', 'trama_video_h3_referencia.json', 'MiniMax H3 (referências → vídeo, com som)'],
   ['video_create', 'trama_video_ltx23_texto.json', 'LTX-2.3 (texto → vídeo, com som)'],

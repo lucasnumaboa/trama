@@ -6,6 +6,7 @@ import { editMedia, mediaInfo, OPERATIONS, SINGLE_INPUT_OPS, NoChange } from './
 import { readImage, readVideo, readPeople, findPerson, describeCharacter } from './vision.js';
 import { reviewGeneration } from './review.js';
 import { getSettings } from './settings.js';
+import { listCapabilities } from './capabilities.js';
 import { swapVideo, planChunks, matchPerson, DEFAULT_CHUNK, MAX_CHUNK, SWAP_WORKFLOW } from './swap.js';
 import { castOf, findCharacter, upsertCharacter, removeCharacter, mentionedCharacters, placeCharacters } from './cast.js';
 import {
@@ -264,6 +265,7 @@ let catalogCache = { at: 0, text: '' };
 export async function workflowCatalog() {
   if (catalogCache.text && Date.now() - catalogCache.at < 60000) return catalogCache.text;
   const lines = [];
+  const inCategories = new Set(listCapabilities().flatMap((c) => c.models.map((m) => m.workflow)));
   for (const w of await comfy.listWorkflows()) {
     try {
       const d = await describeByName(w.name);
@@ -275,7 +277,10 @@ export async function workflowCatalog() {
         lines.push(`- ${d.name}: troca uma pessoa de um vídeo pela pessoa de uma foto. Não chame com run_workflow: use video_people e swap_character.`);
         continue;
       }
-      lines.push(`- ${d.name}: ${ins} → ${outs}. ${refCapacity(d)}${about ? ` ${about}` : ''}`);
+      // Workflow fora das categorias (um teste pessoal do usuário salvo no ComfyUI):
+      // não tem a ampliação nem as notas dos trama_, então só entra se ele pedir.
+      const personal = !inCategories.has(d.name) && !d.name.startsWith('trama_');
+      lines.push(`- ${d.name}: ${ins} → ${outs}. ${personal ? 'Workflow pessoal do usuário, fora das categorias: use só se ele pedir por nome. ' : ''}${refCapacity(d)}${about ? ` ${about}` : ''}`);
     } catch (e) {
       lines.push(`- ${w.name}: indisponível (${clip(e.message, 120)})`);
     }
