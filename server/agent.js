@@ -136,6 +136,43 @@ function modelText(p, text, attachments) {
 /** Texto legível (título do projeto): referências viram o título do card. */
 const plainText = (p, text) => text.replace(REF, (m, id) => p.assets.find((a) => a.id === id)?.title || 'anexo');
 
+/**
+ * Conserta o histórico do modelo: toda chamada de ferramenta precisa ser seguida, logo
+ * depois, da resposta dela (senão o DeepSeek recusa a conversa inteira com "insufficient
+ * tool messages"). Acontece quando o servidor cai no meio de uma ferramenta (app fechado
+ * ou atualizado durante um vídeo): o finally que fecha as chamadas não roda.
+ * Chamada sem resposta ganha {"error":"interrompido"}; resposta sem chamada sai.
+ * Devolve { messages, changed }.
+ */
+export function repairHistory(llm) {
+  const out = [];
+  let changed = false;
+  for (let i = 0; i < llm.length; i++) {
+    const m = llm[i];
+    if (m.role === 'tool') {
+      changed = true; // resposta solta (sem a chamada logo antes)
+      continue;
+    }
+    out.push(m);
+    const calls = m.role === 'assistant' ? m.tool_calls || [] : [];
+    if (!calls.length) continue;
+    const answered = new Set();
+    while (llm[i + 1]?.role === 'tool') {
+      const t = llm[++i];
+      if (calls.some((c) => c.id === t.tool_call_id) && !answered.has(t.tool_call_id)) {
+        out.push(t);
+        answered.add(t.tool_call_id);
+      } else changed = true;
+    }
+    for (const c of calls) {
+      if (answered.has(c.id)) continue;
+      out.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify({ error: 'interrompido' }) });
+      changed = true;
+    }
+  }
+  return { messages: out, changed };
+}
+
 /** Histórico enxuto: turnos antigos sem raciocínio e com resultados de ferramenta cortados. */
 function contextMessages(p, currentStart) {
   return p.llm.map((m, i) => {
@@ -155,6 +192,10 @@ export async function sendMessage(projectId, { text, attachments = [], model }) 
 
   // Respostas a perguntas abertas marcam a pergunta como respondida.
   for (const m of p.messages) for (const part of m.parts || []) if (part.type === 'question' && !part.answer) part.answer = clean;
+
+  // Histórico quebrado por uma queda no meio de uma ferramenta: conserta antes de seguir.
+  const repaired = repairHistory(p.llm || []);
+  if (repaired.changed) p.llm = repaired.messages;
 
   const referenced = [...clean.matchAll(REF)].map((m) => m[1]);
   const user = {
