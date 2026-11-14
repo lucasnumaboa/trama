@@ -1,6 +1,6 @@
 {
   "name": "trama",
-  "version": "0.2.9",
+  "version": "0.3.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -18,8 +18,10 @@
     "release": "npm run dist && node tools/release.mjs"
   },
   "dependencies": {
+    "@google/model-viewer": "^4.3.1",
     "electron-updater": "6.8.12",
-    "express": "4.21.2"
+    "express": "4.21.2",
+    "three": "^0.183.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "4.3.4",

@@ -27,6 +27,8 @@ const PATHS = {
   close: 'M6 6l12 12 M18 6L6 18',
   chevron: 'M9 6l6 6-6 6',
   cube: 'M12 3l8 4.5v9L12 21l-8-4.5v-9z M4 7.5l8 4.5 8-4.5 M12 12v9',
+  model3d: 'M12 3l8 4.5v9L12 21l-8-4.5v-9z M4 7.5l8 4.5 8-4.5 M12 12v9',
+  target: 'M12 19a7 7 0 1 0 0-14 7 7 0 0 0 0 14z M12 2v4 M12 18v4 M2 12h4 M18 12h4 M12 12v.01',
   arrowUp: 'M12 19V5 M6 11l6-6 6 6',
   sparkle: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z',
   scissors: 'M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M20 4L8.1 15.9 M14.5 14.5L20 20 M8.1 8.1L12 12',
@@ -51,7 +53,7 @@ export function Icon({ name, size = 16, className = '', title }) {
   );
 }
 
-export const KIND_LABEL = { image: 'Imagem', video: 'Vídeo', audio: 'Áudio', text: 'Texto', file: 'Arquivo' };
+export const KIND_LABEL = { image: 'Imagem', video: 'Vídeo', audio: 'Áudio', text: 'Texto', model3d: 'Modelo 3D', file: 'Arquivo' };
 
 // Formatação inline: **negrito**, *itálico*, `código`.
 function inline(text, keyBase) {

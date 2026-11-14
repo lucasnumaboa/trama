@@ -65,3 +65,22 @@ test('unknown node gives a clear error', () => {
   const wf = { nodes: [{ id: 1, type: 'NodeThatDoesNotExist', mode: 0, inputs: [], widgets_values: [] }], links: [] };
   assert.throws(() => convertWorkflow(wf, objectInfo), /não existe neste ComfyUI/);
 });
+
+test('socketless field (COLOR) comes from the widget, like the frontend sends it', () => {
+  // Definição real do ImageCropToMask (ComfyUI 0.43): "background" não tem encaixe.
+  const def = {
+    input: {
+      required: {
+        images: ['IMAGE', {}],
+        masks: ['MASK', {}],
+        width: ['INT', { default: 1024 }],
+        height: ['INT', { default: 1024 }],
+        pad_factor: ['FLOAT', { default: 1 }],
+        grow_mask: ['INT', { default: 0 }],
+        background: ['COLOR', { default: '#000000', socketless: true }],
+      },
+    },
+    input_order: { required: ['images', 'masks', 'width', 'height', 'pad_factor', 'grow_mask', 'background'] },
+  };
+  assert.deepEqual(mapWidgetValues(def, [1024, 1024, 1.1, 0, '#000000'], 'ImageCropToMask'), { width: 1024, height: 1024, pad_factor: 1.1, grow_mask: 0, background: '#000000' });
+});

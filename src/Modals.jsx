@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { api, fileUrl, downloadFile } from './api.js';
 import { Icon, KIND_LABEL } from './ui.jsx';
 import { getVolume, saveVolume } from './volume.js';
+const ModelViewer = lazy(() => import('./Model3D.jsx').then((m) => ({ default: m.ModelViewer })));
+const ExportMenu = lazy(() => import('./Model3D.jsx').then((m) => ({ default: m.ExportMenu })));
 
 export function WorkflowsModal({ onClose }) {
   const [list, setList] = useState(null);
@@ -60,7 +62,7 @@ export function WorkflowsModal({ onClose }) {
   );
 }
 
-export function PreviewModal({ asset, onClose, onSaveText, onVersion }) {
+export function PreviewModal({ asset, onClose, onSaveText, onVersion, onFix3d, agentBusy }) {
   const [text, setText] = useState(asset.text || '');
   const [revealError, setRevealError] = useState('');
   const url = fileUrl(asset.file);
@@ -74,9 +76,15 @@ export function PreviewModal({ asset, onClose, onSaveText, onVersion }) {
           <div className="row">
             {url && asset.status !== 'generating' && (
               <>
-                <button className="btn" onClick={() => downloadFile(asset.file)}>
-                  <Icon name="download" size={14} /> Baixar
-                </button>
+                {asset.kind === 'model3d' && /\.glb$/i.test(asset.file.filename) ? (
+                  <Suspense fallback={null}>
+                    <ExportMenu file={asset.file} title={asset.title} />
+                  </Suspense>
+                ) : (
+                  <button className="btn" onClick={() => downloadFile(asset.file)}>
+                    <Icon name="download" size={14} /> Baixar
+                  </button>
+                )}
                 <button
                   className="btn"
                   onClick={() => api.revealFile(asset.file).then(() => setRevealError(''), (e) => setRevealError(e.message))}
@@ -103,6 +111,11 @@ export function PreviewModal({ asset, onClose, onSaveText, onVersion }) {
             />
           )}
           {asset.kind === 'audio' && <audio src={url} controls autoPlay />}
+          {asset.kind === 'model3d' && url && (
+            <Suspense fallback={<div className="model-full" />}>
+              <ModelViewer url={url} title={asset.title} busy={asset.status === 'generating' || agentBusy} onFix={onFix3d && /\.glb$/i.test(asset.file.filename) ? (fix) => onFix3d(asset, fix) : undefined} />
+            </Suspense>
+          )}
           {asset.kind === 'text' && (
             <>
               <textarea value={text} onChange={(e) => setText(e.target.value)} rows={18} />

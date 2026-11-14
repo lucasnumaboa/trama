@@ -150,6 +150,28 @@ export default function App() {
   }
 
   const openAsset = useCallback((a) => setPreview(a), []);
+
+  // "Apontar correção" num modelo 3D: a foto da vista com o ponto marcado vira um card
+  // ao lado do modelo e vai para o agente junto com o pedido.
+  async function fix3d(asset, { blob, text }) {
+    if (running) throw new Error('O agente ainda está trabalhando neste projeto. Espere terminar e peça de novo.');
+    const pos = asset.position ? { x: asset.position.x + 360, y: asset.position.y } : undefined;
+    const file = new File([blob], `correcao-${asset.title}.png`.replace(/[\\/:*?"<>|]+/g, '_'), { type: 'image/png' });
+    const shot = await api.upload(project.id, file, pos);
+    await api.updateAsset(project.id, shot.id, { title: `Correção: ${text}`.slice(0, 80) }).catch(() => {});
+    setRunning(true);
+    try {
+      await api.send(project.id, {
+        text: `Corrija o modelo 3D "${asset.title}": ${text}. O ponto está marcado com um círculo vermelho na imagem "Correção: ${text}".`.slice(0, 2000),
+        attachments: [asset.id, shot.id],
+        model,
+      });
+    } catch (e) {
+      setRunning(false);
+      throw e;
+    }
+    setPreview(null);
+  }
   const focusAsset = useCallback((id) => {
     setFocus({ id, at: Date.now() });
     fromChat.current = true;
@@ -209,6 +231,8 @@ export default function App() {
           onClose={() => setPreview(null)}
           onSaveText={(text) => api.updateAsset(project.id, preview.id, { text }).then(() => say('Texto salvo')).catch((e) => say(e.message))}
           onVersion={(assetId, index) => api.updateAsset(project.id, assetId, { current: index }).catch((e) => say(e.message))}
+          onFix3d={fix3d}
+          agentBusy={running}
         />
       )}
       {modal === 'workflows' && <WorkflowsModal onClose={() => setModal(null)} />}

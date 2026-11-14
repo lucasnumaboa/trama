@@ -16,6 +16,7 @@ function mediaFlag(spec) {
 
 function outputKind(classType, def) {
   const name = classType.toLowerCase();
+  if (/glb|gltf|3d|mesh/.test(name)) return 'model3d';
   if (/audio|mp3|opus|flac/.test(name)) return 'audio';
   if (/video|webm|animated|gif/.test(name)) return 'video';
   if (/image|mask/.test(name)) return 'image';

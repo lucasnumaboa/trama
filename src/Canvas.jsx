@@ -1,7 +1,9 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlow, Background, MiniMap, Handle, Position, useReactFlow, useViewport, applyNodeChanges } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api, fileUrl, downloadFile } from './api.js';
+// O visualizador 3D (three.js) só carrega quando aparece um card 3D.
+const ModelThumb = lazy(() => import('./Model3D.jsx').then((m) => ({ default: m.ModelThumb })));
 import { Icon, KIND_LABEL } from './ui.jsx';
 import { getVolume, saveVolume } from './volume.js';
 
@@ -164,6 +166,11 @@ const AssetCard = memo(function AssetCard({ data, selected }) {
         <Icon name="audio" size={28} />
         <audio src={url} controls preload="none" className="nodrag" />
       </div>
+    );
+  else if (asset.kind === 'model3d') body = (
+      <Suspense fallback={<div className="card-audio"><Icon name="model3d" size={28} /></div>}>
+        <ModelThumb url={url} />
+      </Suspense>
     );
   else if (asset.kind === 'text') body = <div className="card-text nowheel">{asset.text}</div>;
   else body = <div className="card-file">{asset.file?.filename}</div>;

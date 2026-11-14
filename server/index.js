@@ -11,6 +11,7 @@ import { listModels } from './deepseek.js';
 import { publicSettings, updateSettings } from './settings.js';
 import { listCapabilities, setDefaultModel, addModel, removeModel, modelInCategory } from './capabilities.js';
 import * as projects from './projects.js';
+import { exportModel, EXPORT_FORMATS } from './model3d.js';
 import { sendMessage, stopAgent, isRunning } from './agent.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -96,6 +97,24 @@ app.get('/api/comfy/view', wrap(async (req, res) => {
   pipeline(Readable.fromWeb(upstream.body), res, (error) => {
     if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') console.error('[GET /api/comfy/view]', error.message);
   });
+}));
+
+// Exporta um modelo 3D (GLB do ComfyUI) em GLB, STL ou OBJ. ?height=mm escala o STL/OBJ
+// para impressão (Z para cima, no chão); sem height o OBJ fica nas unidades do GLB.
+app.get('/api/model3d/export', wrap(async (req, res) => {
+  const format = String(req.query.format || 'glb').toLowerCase();
+  const fmt = EXPORT_FORMATS[format];
+  if (!fmt) return res.status(400).json({ error: 'Formato desconhecido: use glb, stl ou obj.' });
+  const file = { filename: String(req.query.filename || ''), subfolder: String(req.query.subfolder || ''), type: String(req.query.type || 'output') };
+  if (!/\.glb$/i.test(file.filename)) return res.status(400).json({ error: 'Só dá para exportar modelos GLB.' });
+  const upstream = await comfy.fetchFile(file);
+  const height = Number(req.query.height);
+  const data = exportModel(Buffer.from(await upstream.arrayBuffer()), format, { heightMm: Number.isFinite(height) && height > 0 ? Math.min(height, 5000) : undefined });
+  const base = (req.query.name ? String(req.query.name) : path.basename(file.filename, '.glb')).replace(/[\\/:*?"<>|]+/g, '_').trim().slice(0, 80) || 'modelo';
+  const name = `${base}.${fmt.ext}`;
+  res.setHeader('Content-Type', fmt.type);
+  res.setHeader('Content-Disposition', `attachment; filename="${name.replace(/[^ -~]|"/g, '_')}"; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.send(data);
 }));
 
 // Abre a pasta do arquivo no Explorer com ele selecionado (só se o ComfyUI roda neste PC).

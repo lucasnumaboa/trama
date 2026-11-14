@@ -22,6 +22,7 @@
   --k-video: #b48cff;
   --k-audio: #3ccf8e;
   --k-text: #f0b84f;
+  --k-model3d: #ff9a5c;
   --radius: 12px;
   --shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
   color-scheme: dark;
@@ -452,3 +453,24 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 .card-menu button kbd { margin-left: auto; font-size: 10px; padding: 1px 5px; border-radius: 4px; border: 1px solid #3a3a44; color: #8b8b96; font-family: inherit; }
 .card-menu-sep { height: 1px; margin: 4px 6px; background: #2c2c34; }
 .canvas-notice { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 40; max-width: min(560px, 90%); padding: 10px 14px; border-radius: 10px; background: #2a1d22; border: 1px solid #5a2f3a; color: #ffc7c7; font-size: 13px; }
+
+/* ---- Modelo 3D ---- */
+.kind-model3d .card-label .icon { color: var(--k-model3d); }
+.kind-model3d .card-body { background: radial-gradient(110% 90% at 50% 20%, #2a2a31, #141417 70%); }
+.model-thumb { display: block; width: 100%; height: auto; aspect-ratio: 1; --poster-color: transparent; }
+.model-viewer-wrap { display: flex; flex-direction: column; gap: 10px; }
+.model-full { width: 100%; height: min(70vh, 640px); border-radius: 12px; background: radial-gradient(110% 90% at 50% 20%, #34343c, #16161a 70%); --poster-color: transparent; }
+.model-viewer-wrap.is-pointing .model-full { cursor: crosshair; outline: 2px solid #ff4d4d; outline-offset: -2px; }
+.model-hotspot { width: 22px; height: 22px; border-radius: 50%; border: 3px solid #ff1f1f; background: rgba(255, 31, 31, 0.25); box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.45); padding: 0; pointer-events: none; }
+.model-fix { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.model-fix input { flex: 1 1 260px; min-width: 0; }
+.model-fix-hint { width: 100%; font-size: 12px; color: var(--muted); }
+.export-menu { position: relative; }
+.export-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: 290px; padding: 6px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); display: flex; flex-direction: column; gap: 2px; }
+.export-pop button { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; background: none; border: 0; color: var(--text); cursor: pointer; }
+.export-pop button:hover { background: var(--hover, rgba(255, 255, 255, 0.06)); }
+.export-pop button span { font-size: 12px; color: var(--muted); }
+.export-stl { display: flex; align-items: center; gap: 6px; }
+.export-stl button { flex: 1; }
+.export-stl label { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); white-space: nowrap; padding-right: 6px; }
+.export-stl input { width: 64px; }

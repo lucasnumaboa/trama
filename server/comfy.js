@@ -250,6 +250,7 @@ const EXT = {
   image: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff'],
   video: ['mp4', 'webm', 'mov', 'mkv', 'avi', 'm4v'],
   audio: ['mp3', 'wav', 'flac', 'ogg', 'opus', 'm4a', 'aac'],
+  model3d: ['glb', 'gltf', 'obj', 'stl', 'ply', 'fbx', 'usdz'],
 };
 export function mediaKind(filename = '') {
   const ext = filename.split('.').pop().toLowerCase();

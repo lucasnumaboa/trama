@@ -44,7 +44,8 @@ function orderedSpecs(inputs, order) {
 export function isWidgetSpec(spec) {
   const [type, opts = {}] = spec;
   if (opts.forceInput) return false;
-  if (Array.isArray(type) || WIDGET_TYPES.has(type) || type === DYNAMIC_COMBO || opts.widgetType) return true;
+  // socketless: campo sem encaixe (ex.: COLOR do ImageCropToMask), sempre vem do widget.
+  if (Array.isArray(type) || WIDGET_TYPES.has(type) || type === DYNAMIC_COMBO || opts.widgetType || opts.socketless) return true;
   // Tipos múltiplos como "FLOAT,INT" também são campos.
   return typeof type === 'string' && type.includes(',') && type.split(',').every((t) => WIDGET_TYPES.has(t.trim()));
 }

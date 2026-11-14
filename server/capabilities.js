@@ -18,6 +18,7 @@ export const CATEGORIES = [
   { id: 'video_edit', label: 'Editar vídeo', description: 'Ampliar vídeo, trocar personagem (e edições rápidas com ffmpeg)' },
   { id: 'music_create', label: 'Criar música', description: 'Música com ou sem voz a partir de texto' },
   { id: 'voice_edit', label: 'Edição de voz', description: 'Troca a voz de um áudio pela voz de referência' },
+  { id: 'model3d_create', label: 'Criar modelo 3D', description: 'Imagem de um objeto ou personagem para modelo 3D com textura (GLB)' },
 ];
 
 // [categoria, workflow, nome exibido]
@@ -49,6 +50,8 @@ const BUILTIN = [
   ['music_create', 'trama_musica_ace_step_aio.json', 'ACE-Step 1.5 Turbo AIO (com voz, mais leve)'],
   ['music_create', 'stable_audio3_otimizado_3090.json', 'Stable Audio 3 (instrumental e efeitos)'],
   ['voice_edit', 'trama_trocar_voz.json', 'Seed-VC (trocar voz)'],
+  ['model3d_create', 'trama_3d_trellis2.json', 'TRELLIS.2 (imagem → modelo 3D, mais nítido)'],
+  ['model3d_create', 'trama_3d_pixal3d.json', 'Pixal3D (segue o ângulo da foto; textura menos nítida)'],
 ];
 
 // Modelo padrão de fábrica de cada categoria.
@@ -61,6 +64,7 @@ const BUILTIN_DEFAULTS = {
   video_edit: 'trama_ampliar_video.json',
   music_create: 'trama_musica_com_voz_ace_step.json',
   voice_edit: 'trama_trocar_voz.json',
+  model3d_create: 'trama_3d_trellis2.json',
 };
 
 let store = null;

@@ -6,6 +6,7 @@ import { editMedia, mediaInfo, OPERATIONS, SINGLE_INPUT_OPS, NoChange } from './
 import { readImage, readVideo, readPeople, findPerson, describeCharacter } from './vision.js';
 import { reviewGeneration } from './review.js';
 import { getSettings } from './settings.js';
+import { meshStats } from './model3d.js';
 import { listCapabilities } from './capabilities.js';
 import { swapVideo, planChunks, matchPerson, DEFAULT_CHUNK, MAX_CHUNK, SWAP_WORKFLOW } from './swap.js';
 import { castOf, findCharacter, upsertCharacter, removeCharacter, mentionedCharacters, placeCharacters } from './cast.js';
@@ -13,8 +14,8 @@ import {
   addAsset, updateAsset, saveProject, describeAsset, addEdge, emit, placeBelow, addVersion, selectVersion, removeAsset,
 } from './projects.js';
 
-const KIND_PT = { image: 'imagem', video: 'vídeo', audio: 'áudio', text: 'texto', file: 'arquivo' };
-const KIND_PLURAL = { image: 'imagens', video: 'vídeos', audio: 'áudios', text: 'textos', file: 'arquivos' };
+const KIND_PT = { image: 'imagem', video: 'vídeo', audio: 'áudio', text: 'texto', model3d: 'modelo 3D', file: 'arquivo' };
+const KIND_PLURAL = { image: 'imagens', video: 'vídeos', audio: 'áudios', text: 'textos', model3d: 'modelos 3D', file: 'arquivos' };
 const plural = (n, kind) => (n === 1 ? `1 ${KIND_PT[kind] || kind}` : `${n} ${KIND_PLURAL[kind] || kind}`);
 const clip = (s, n) => (s && s.length > n ? `${s.slice(0, n)}…` : s);
 const OP_LABEL = {
@@ -365,6 +366,7 @@ function workflowDetail(d) {
 // de dizer ao usuário que ficou pronto.
 async function inspect(asset, { expect = {} } = {}) {
   if (!asset?.file || asset.kind === 'text') return null;
+  if (asset.kind === 'model3d') return inspectModel(asset);
   let info;
   try {
     info = await mediaInfo(asset.file, asset.kind);
@@ -386,6 +388,20 @@ async function inspect(asset, { expect = {} } = {}) {
   for (const k of ['width', 'height', 'duration', 'fps', 'size_mb', 'has_audio', 'border', 'dominant_color']) if (info[k] !== undefined && info[k] !== null) summary[k] = info[k];
   if (s) summary.sound = `${s.audible_start}s–${s.audible_end}s`;
   return { ...summary, warnings: w };
+}
+
+// Modelo 3D: o ffmpeg não lê; mede a malha direto do GLB.
+async function inspectModel(asset) {
+  try {
+    const res = await comfy.fetchFile(asset.file);
+    const s = meshStats(Buffer.from(await res.arrayBuffer()));
+    const w = [];
+    if (s.triangles < 500) w.push(`a malha tem só ${s.triangles} triângulos: o modelo saiu quase vazio. Confira a imagem de entrada (objeto inteiro, fundo limpo) e gere de novo.`);
+    if (!s.textured) w.push('o modelo saiu sem textura (só a forma).');
+    return { id: asset.id, kind: 'model3d', triangles: s.triangles, size: s.size, textured: s.textured, warnings: w };
+  } catch (e) {
+    return { id: asset.id, warnings: [`não consegui ler o modelo 3D: ${e.message}`] };
+  }
 }
 
 async function inspectAll(assets, opts) {
@@ -949,6 +965,7 @@ export async function runTool(name, args, ctx) {
 
     case 'look_at': {
       const a = findAsset(p, args.asset_id);
+      if (a.kind === 'model3d') throw new Error('look_at não abre modelo 3D. Olhe a imagem de onde ele saiu (a entrada ligada ao card) ou a foto do ponto marcado que o usuário mandou.');
       if (!a.file || (a.kind !== 'image' && a.kind !== 'video')) throw new Error('look_at olha imagens e vídeos; esse card não é nenhum dos dois.');
       if (a.status === 'generating') throw new Error('Esse card ainda está gerando.');
       if (a.vision && !args.refresh) {
