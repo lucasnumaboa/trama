@@ -1241,6 +1241,58 @@ class TramaContrastBackground:
         return (color, dark >= dark_share)
 
 
+class TramaMatchColor:
+    """Tira da textura a cor que o TRELLIS.2 inventou num personagem preto e branco.
+
+    O modelo inventa o que não aparece na imagem (costas, nuca, às vezes as pernas) e
+    em personagem preto e branco costuma pintar essas partes de marrom ou tom de pele.
+    Se o objeto da imagem de origem não tem cor (saturação média baixa), a textura vira
+    tons de cinza; com cor na origem, passa sem mudança.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "base_color": ("IMAGE",),
+                "image": ("IMAGE", {"tooltip": "Imagem de origem do modelo 3D."}),
+                "mask": ("MASK", {"tooltip": "Máscara do objeto na imagem de origem (1 = objeto)."}),
+                "max_saturation": ("FLOAT", {"default": 0.12, "min": 0.0, "max": 1.0, "step": 0.01,
+                                             "tooltip": "Abaixo desta saturação média a origem conta como preto e branco."}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("base_color",)
+    FUNCTION = "match"
+    CATEGORY = "Trama"
+
+    def match(self, base_color, image, mask, max_saturation):
+        img = image[0, ..., :3].float()
+        m = mask[0].float() if mask.dim() == 3 else mask.float()
+        if m.shape != img.shape[:2]:
+            m = torch.nn.functional.interpolate(m[None, None], size=img.shape[:2], mode="bilinear")[0, 0]
+        inside = m > 0.5
+        if int(inside.sum()) == 0:
+            return (base_color,)
+        px = img[inside]
+        mx = px.max(dim=-1).values
+        mn = px.min(dim=-1).values
+        sat = float(torch.where(mx > 0.05, (mx - mn) / mx.clamp(min=1e-6), torch.zeros_like(mx)).mean())
+        if sat >= max_saturation:
+            return (base_color,)
+        rgb = base_color[..., :3]
+        luma = (rgb * torch.tensor([0.299, 0.587, 0.114], device=rgb.device)).sum(-1, keepdim=True)
+        # Cartum preto e branco: empurra os escuros para o preto e os claros para o branco
+        # (o marrom inventado vira cinza-médio só com a conversão).
+        x = ((luma - 0.12) / (0.85 - 0.12)).clamp(0, 1)
+        luma = x * x * (3 - 2 * x)
+        out = base_color.clone()
+        out[..., :3] = luma.expand_as(rgb)
+        print(f"[Trama] origem preto e branco (saturação {sat:.3f}): textura em tons de cinza")
+        return (out,)
+
+
 class TramaLimitMetallic:
     """Tira o metal da textura de um objeto escuro.
 
@@ -1272,5 +1324,5 @@ class TramaLimitMetallic:
         return (metallic.clamp(max=float(limit)),)
 
 
-NODE_CLASS_MAPPINGS = {"TramaMatchVolume": TramaMatchVolume, "TramaAnalyzeAudio": TramaAnalyzeAudio, "TramaMixAudio": TramaMixAudio, "TramaAudioWindow": TramaAudioWindow, "TramaAceRepaint": TramaAceRepaint, "TramaRepaintSplice": TramaRepaintSplice, "TramaTranscribeAudio": TramaTranscribeAudio, "TramaLoadMesh": TramaLoadMesh, "TramaRiggedToGlb": TramaRiggedToGlb, "TramaContrastBackground": TramaContrastBackground, "TramaLimitMetallic": TramaLimitMetallic, "TramaImageStyle": TramaImageStyle, "TramaAnimate3D": TramaAnimate3D}
-NODE_DISPLAY_NAME_MAPPINGS = {"TramaMatchVolume": "Igualar volume (Trama)", "TramaAnalyzeAudio": "Analisar áudio (Trama)", "TramaMixAudio": "Juntar áudios (Trama)", "TramaAudioWindow": "Trecho para regerar (Trama)", "TramaAceRepaint": "Repaint do ACE-Step 1.5 (Trama)", "TramaRepaintSplice": "Colar trecho na música (Trama)", "TramaTranscribeAudio": "Transcrever voz (Trama)", "TramaLoadMesh": "Carregar modelo 3D (Trama)", "TramaRiggedToGlb": "Esqueleto: FBX para GLB (Trama)", "TramaContrastBackground": "Fundo com contraste para 3D (Trama)", "TramaLimitMetallic": "Limitar metal (Trama)", "TramaImageStyle": "Desenho chapado? (Trama)", "TramaAnimate3D": "Animar modelo 3D (Trama)"}
+NODE_CLASS_MAPPINGS = {"TramaMatchVolume": TramaMatchVolume, "TramaAnalyzeAudio": TramaAnalyzeAudio, "TramaMixAudio": TramaMixAudio, "TramaAudioWindow": TramaAudioWindow, "TramaAceRepaint": TramaAceRepaint, "TramaRepaintSplice": TramaRepaintSplice, "TramaTranscribeAudio": TramaTranscribeAudio, "TramaLoadMesh": TramaLoadMesh, "TramaRiggedToGlb": TramaRiggedToGlb, "TramaContrastBackground": TramaContrastBackground, "TramaLimitMetallic": TramaLimitMetallic, "TramaImageStyle": TramaImageStyle, "TramaAnimate3D": TramaAnimate3D, "TramaMatchColor": TramaMatchColor}
+NODE_DISPLAY_NAME_MAPPINGS = {"TramaMatchVolume": "Igualar volume (Trama)", "TramaAnalyzeAudio": "Analisar áudio (Trama)", "TramaMixAudio": "Juntar áudios (Trama)", "TramaAudioWindow": "Trecho para regerar (Trama)", "TramaAceRepaint": "Repaint do ACE-Step 1.5 (Trama)", "TramaRepaintSplice": "Colar trecho na música (Trama)", "TramaTranscribeAudio": "Transcrever voz (Trama)", "TramaLoadMesh": "Carregar modelo 3D (Trama)", "TramaRiggedToGlb": "Esqueleto: FBX para GLB (Trama)", "TramaContrastBackground": "Fundo com contraste para 3D (Trama)", "TramaLimitMetallic": "Limitar metal (Trama)", "TramaImageStyle": "Desenho chapado? (Trama)", "TramaAnimate3D": "Animar modelo 3D (Trama)", "TramaMatchColor": "Cor da textura igual à origem (Trama)"}

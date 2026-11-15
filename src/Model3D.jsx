@@ -6,6 +6,7 @@ import '@google/model-viewer';
 import { Icon } from './ui.jsx';
 
 /** Miniatura no card: gira sozinha; sem controles para o arrasto mover o card. */
+// autoplay: card animado (andar, correr...) já mostra o movimento no canvas.
 export function ModelThumb({ url }) {
   return (
     <model-viewer
@@ -14,6 +15,7 @@ export function ModelThumb({ url }) {
       auto-rotate=""
       rotation-per-second="20deg"
       interaction-prompt="none"
+      autoplay=""
       shadow-intensity="0.6"
       environment-image="neutral"
       exposure="1.05"
