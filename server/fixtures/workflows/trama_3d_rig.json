@@ -1,0 +1,207 @@
+{
+  "id": "6f1d2a40-3c8e-4b7a-9e51-7a3d0c2b9f11",
+  "revision": 0,
+  "last_node_id": 5,
+  "last_link_id": 3,
+  "nodes": [
+    {
+      "id": 5,
+      "type": "MarkdownNote",
+      "pos": [
+        -760,
+        -40
+      ],
+      "size": [
+        520,
+        520
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Como usar",
+      "properties": {},
+      "widgets_values": [
+        "## Modelo 3D → esqueleto (rig) — UniRig\nRecebe **um modelo 3D (GLB)** de pessoa, bicho, monstro ou objeto articulado e devolve o mesmo modelo **com esqueleto e pesos de pele**, pronto para animar. Sai em GLB (aparece no Trama) e FBX (Exportar → FBX: Mixamo, Unity, Unreal).\n- **skeleton_template**: `mixamo` para humanoides (ossos com os nomes do Mixamo, em T-pose: as animações do Mixamo funcionam direto); `articulationxl` para bichos, monstros, pássaros e qualquer coisa que não seja humanoide (esqueleto livre).\n- Funciona melhor com o modelo inteiro, de pé, braços abertos (T-pose ou A-pose) e partes separadas (braço longe do corpo).\n- Use a saída de Criar modelo 3D (TRELLIS.2) como entrada.\n- **target_face_count**: a malha é simplificada para 50 mil faces antes do rig. Não mude sem motivo.\n- Leva de 1 a 3 minutos na 3090. Precisa dos nós ComfyUI-UniRig e ComfyUI-Trama."
+      ]
+    },
+    {
+      "id": 1,
+      "type": "TramaLoadMesh",
+      "pos": [
+        -160,
+        0
+      ],
+      "size": [
+        340,
+        80
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "mesh",
+          "type": "TRIMESH",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "title": "Modelo 3D de entrada",
+      "properties": {
+        "Node name for S&R": "TramaLoadMesh"
+      },
+      "widgets_values": [
+        "3d/realistic_male_character.glb"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "UniRigLoadModel",
+      "pos": [
+        -160,
+        180
+      ],
+      "size": [
+        340,
+        90
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "UNIRIG_MODEL",
+          "links": [
+            2
+          ]
+        }
+      ],
+      "title": "Carregar UniRig",
+      "properties": {
+        "Node name for S&R": "UniRigLoadModel"
+      },
+      "widgets_values": [
+        "auto",
+        "auto"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "UniRigAutoRig",
+      "pos": [
+        260,
+        40
+      ],
+      "size": [
+        360,
+        180
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "trimesh",
+          "type": "TRIMESH",
+          "link": 1
+        },
+        {
+          "name": "model",
+          "type": "UNIRIG_MODEL",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fbx_output_path",
+          "type": "STRING",
+          "links": [
+            3
+          ]
+        }
+      ],
+      "title": "Esqueleto e pesos",
+      "properties": {
+        "Node name for S&R": "UniRigAutoRig"
+      },
+      "widgets_values": [
+        "mixamo",
+        "",
+        50000,
+        false
+      ]
+    },
+    {
+      "id": 4,
+      "type": "TramaRiggedToGlb",
+      "pos": [
+        700,
+        40
+      ],
+      "size": [
+        340,
+        90
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "fbx_output_path",
+          "type": "STRING",
+          "link": 3
+        }
+      ],
+      "outputs": [
+        {
+          "name": "glb_path",
+          "type": "STRING",
+          "links": []
+        }
+      ],
+      "title": "Salvar modelo com esqueleto",
+      "properties": {
+        "Node name for S&R": "TramaRiggedToGlb"
+      },
+      "widgets_values": [
+        "trama/trama_3d_rig"
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      3,
+      0,
+      "TRIMESH"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      1,
+      "UNIRIG_MODEL"
+    ],
+    [
+      3,
+      3,
+      0,
+      4,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

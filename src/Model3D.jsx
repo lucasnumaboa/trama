@@ -175,7 +175,7 @@ export function ModelViewer({ url, title, onFix, busy }) {
 }
 
 /** Menu de exportação: GLB (com textura), STL na altura escolhida (impressão) e OBJ. */
-export function ExportMenu({ file, title }) {
+export function ExportMenu({ file, title, rigged }) {
   const [open, setOpen] = useState(false);
   const [height, setHeight] = useState(() => Number(localStorage.getItem('trama.stlHeight')) || 100);
   useEffect(() => {
@@ -223,6 +223,11 @@ export function ExportMenu({ file, title }) {
           <button onClick={() => go('obj')}>
             <b>OBJ</b> <span>só a malha, sem textura</span>
           </button>
+          {rigged && (
+            <button onClick={() => go('fbx')}>
+              <b>FBX</b> <span>com esqueleto: Mixamo, Unity, Unreal</span>
+            </button>
+          )}
         </div>
       )}
     </div>

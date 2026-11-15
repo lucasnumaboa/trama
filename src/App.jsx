@@ -73,7 +73,12 @@ export default function App() {
       }
     });
     const t = setInterval(() => api.comfyStatus().then(setComfy).catch(() => setComfy({ ok: false })), 30000);
-    return () => clearInterval(t);
+    // Projetos criados por um agente de fora (MCP) aparecem na lista sem recarregar.
+    const lt = setInterval(refreshProjects, 10000);
+    return () => {
+      clearInterval(t);
+      clearInterval(lt);
+    };
   }, []);
 
   // Projeto atual + eventos ao vivo

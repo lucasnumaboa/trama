@@ -266,6 +266,7 @@ function Message({ m, assets, onFocus, onAnswer, running }) {
   }
   return (
     <div className="msg msg-assistant">
+      {m.source === 'mcp' && <div className="msg-source">Via MCP · {m.client || 'agente externo'}</div>}
       {m.parts.map((part, i) => {
         if (part.type === 'text') return <RichText key={i} text={part.text} />;
         if (part.type === 'step') return <Step key={part.id || i} part={part} assets={assets} onFocus={onFocus} />;

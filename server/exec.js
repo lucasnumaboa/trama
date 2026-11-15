@@ -9,16 +9,17 @@ export async function describeByName(name, { refresh = false } = {}) {
 }
 
 // Arquivos que não estão na pasta input do ComfyUI são reenviados para lá.
+// subfolder: pasta dentro de input que o nó exige (o UniRig só lista modelos de input/3d).
 const reuploaded = new Map();
-export async function asComfyInput(file) {
-  if (file.type === 'input') return file.subfolder ? `${file.subfolder}/${file.filename}` : file.filename;
-  const key = `${file.type}/${file.subfolder}/${file.filename}`;
+export async function asComfyInput(file, { subfolder = '' } = {}) {
+  if (file.type === 'input' && (file.subfolder || '') === subfolder) return file.subfolder ? `${file.subfolder}/${file.filename}` : file.filename;
+  const key = `${subfolder}>${file.type}/${file.subfolder}/${file.filename}`;
   if (!reuploaded.has(key)) {
     const res = await comfy.fetchFile(file);
     const buffer = Buffer.from(await res.arrayBuffer());
     const hash = createHash('sha1').update(buffer).digest('hex').slice(0, 12);
     const ext = file.filename.includes('.') ? file.filename.split('.').pop() : 'bin';
-    reuploaded.set(key, await comfy.uploadInput(buffer, `trama_${hash}.${ext}`));
+    reuploaded.set(key, await comfy.uploadInput(buffer, `trama_${hash}.${ext}`, { subfolder }));
   }
   return reuploaded.get(key);
 }
@@ -97,7 +98,7 @@ export async function buildPrompt({ name, values = {}, media = {}, extraRefs = [
   for (const [slotId, file] of Object.entries(media)) {
     const slot = desc.mediaInputs.find((m) => m.id === slotId);
     if (!slot) throw new Error(`O workflow "${name}" não tem a entrada "${slotId}". Entradas: ${desc.mediaInputs.map((m) => m.id).join(', ') || 'nenhuma'}`);
-    prompt[slot.nodeId].inputs[slot.input] = await asComfyInput(file);
+    prompt[slot.nodeId].inputs[slot.input] = await asComfyInput(file, { subfolder: slot.kind === 'model3d' ? '3d' : '' });
   }
   if (extraRefs.length) {
     const g = desc.references?.grow;

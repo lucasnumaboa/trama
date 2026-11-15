@@ -19,6 +19,7 @@ export const CATEGORIES = [
   { id: 'music_create', label: 'Criar música', description: 'Música com ou sem voz a partir de texto' },
   { id: 'voice_edit', label: 'Edição de voz', description: 'Troca a voz de um áudio pela voz de referência' },
   { id: 'model3d_create', label: 'Criar modelo 3D', description: 'Imagem de um objeto ou personagem para modelo 3D com textura (GLB)' },
+  { id: 'model3d_rig', label: 'Esqueleto 3D (rig)', description: 'Põe esqueleto e pesos num modelo 3D (pessoa, bicho, monstro) para animar: GLB e FBX' },
 ];
 
 // [categoria, workflow, nome exibido]
@@ -54,6 +55,7 @@ const BUILTIN = [
   ['voice_edit', 'trama_trocar_voz_musica.json', 'Seed-VC + separação (trocar a voz cantada de uma música completa)'],
   ['model3d_create', 'trama_3d_trellis2.json', 'TRELLIS.2 (imagem → modelo 3D, mais nítido)'],
   ['model3d_create', 'trama_3d_pixal3d.json', 'Pixal3D (segue o ângulo da foto; textura menos nítida)'],
+  ['model3d_rig', 'trama_3d_rig.json', 'UniRig (qualquer personagem: humanoide com ossos do Mixamo, ou bicho e monstro)'],
 ];
 
 // Modelo padrão de fábrica de cada categoria.
@@ -67,6 +69,7 @@ const BUILTIN_DEFAULTS = {
   music_create: 'trama_musica_com_voz_ace_step.json',
   voice_edit: 'trama_trocar_voz.json',
   model3d_create: 'trama_3d_trellis2.json',
+  model3d_rig: 'trama_3d_rig.json',
 };
 
 let store = null;

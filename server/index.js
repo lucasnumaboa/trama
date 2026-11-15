@@ -13,6 +13,7 @@ import { listCapabilities, setDefaultModel, addModel, removeModel, modelInCatego
 import * as projects from './projects.js';
 import { exportModel, EXPORT_FORMATS } from './model3d.js';
 import { sendMessage, stopAgent, isRunning } from './agent.js';
+import { mountMcp, listTools as mcpTools } from './mcp.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.PORT || 5190);
@@ -133,12 +134,15 @@ app.get('/api/comfy/view', wrap(async (req, res) => {
 app.get('/api/model3d/export', wrap(async (req, res) => {
   const format = String(req.query.format || 'glb').toLowerCase();
   const fmt = EXPORT_FORMATS[format];
-  if (!fmt) return res.status(400).json({ error: 'Formato desconhecido: use glb, stl ou obj.' });
+  if (!fmt) return res.status(400).json({ error: 'Formato desconhecido: use glb, stl, obj ou fbx.' });
   const file = { filename: String(req.query.filename || ''), subfolder: String(req.query.subfolder || ''), type: String(req.query.type || 'output') };
   if (!/\.glb$/i.test(file.filename)) return res.status(400).json({ error: 'Só dá para exportar modelos GLB.' });
-  const upstream = await comfy.fetchFile(file);
+  const upstream = await comfy.fetchFile(fmt.sibling ? { ...file, filename: file.filename.replace(/.glb$/i, `.${fmt.ext}`) } : file).catch((error) => {
+    if (fmt.sibling) throw Object.assign(new Error('Este modelo não tem esqueleto. O FBX sai do workflow de esqueleto (Modelo 3D com esqueleto).'), { status: 404 });
+    throw error;
+  });
   const height = Number(req.query.height);
-  const data = exportModel(Buffer.from(await upstream.arrayBuffer()), format, { heightMm: Number.isFinite(height) && height > 0 ? Math.min(height, 5000) : undefined });
+  const data = fmt.sibling ? Buffer.from(await upstream.arrayBuffer()) : exportModel(Buffer.from(await upstream.arrayBuffer()), format, { heightMm: Number.isFinite(height) && height > 0 ? Math.min(height, 5000) : undefined });
   const base = (req.query.name ? String(req.query.name) : path.basename(file.filename, '.glb')).replace(/[\\/:*?"<>|]+/g, '_').trim().slice(0, 80) || 'modelo';
   const name = `${base}.${fmt.ext}`;
   res.setHeader('Content-Type', fmt.type);
@@ -268,6 +272,22 @@ app.get('/api/projects/:id/events', wrap((req, res) => {
     projects.projectEvents.off(p.id, send);
   });
 }));
+
+// ---- MCP: agentes de fora usam o Trama como estúdio ----
+mountMcp(app, PORT);
+app.get('/api/mcp', (req, res) => {
+  const url = `http://127.0.0.1:${PORT}/mcp`;
+  res.json({
+    url,
+    port: PORT,
+    tools: mcpTools().map((t) => t.name),
+    claudeCode: `claude mcp add --transport http --scope user trama ${url}`,
+    codex: `[mcp_servers.trama]
+url = "${url}"
+tool_timeout_sec = 600`,
+    json: JSON.stringify({ mcpServers: { trama: { type: 'http', url } } }, null, 2),
+  });
+});
 
 // ---- Frontend compilado (npm start) ----
 const dist = path.join(ROOT, 'dist');

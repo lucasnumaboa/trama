@@ -13,6 +13,7 @@ export const api = {
   deepseekModels: () => call('/api/deepseek/models'),
   llmModels: (provider) => call(`/api/llm/models${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
   comfyStatus: () => call('/api/comfy/status'),
+  mcpInfo: () => call('/api/mcp'),
   linkPreview: (url) => call(`/api/link/preview?url=${encodeURIComponent(url)}`),
   workflows: (refresh) => call(`/api/comfy/workflows${refresh ? '?refresh=1' : ''}`),
   capabilities: (project) => call(`/api/capabilities${project ? `?project=${encodeURIComponent(project)}` : ''}`),

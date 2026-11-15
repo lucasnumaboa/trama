@@ -11,6 +11,50 @@ const PROVIDER_HELP = {
   custom: 'Qualquer servidor compatível com a API da OpenAI: LM Studio (http://127.0.0.1:1234/v1), Ollama (http://127.0.0.1:11434/v1), vLLM, LocalAI… Chave só se o servidor pedir.',
 };
 
+/** Endereço do MCP e como ligar o Trama num agente de fora (Claude Code, Codex, Cursor). */
+function McpSettings({ setMessage }) {
+  const [info, setInfo] = useState(null);
+  useEffect(() => {
+    api.mcpInfo().then(setInfo).catch(() => setInfo(null));
+  }, []);
+  const copy = (text) => navigator.clipboard.writeText(text).then(() => setMessage('Copiado.')).catch(() => setMessage(text));
+  if (!info) return null;
+  const rows = [
+    ['Claude Code (terminal)', info.claudeCode],
+    ['Codex (~/.codex/config.toml)', info.codex],
+    ['Cursor, Claude Desktop e outros (JSON)', info.json],
+  ];
+  return (
+    <section>
+      <h3>MCP: usar o Trama de outro agente</h3>
+      <p className="hint">
+        Um agente de fora (Claude Code, Codex, Cursor…) pode usar o Trama como estúdio: criar projetos, gerar imagens, música, vídeo, voz e
+        modelos 3D, e copiar os arquivos para o que ele estiver construindo. Tudo aparece aqui no canvas, com uma mensagem "Via MCP" no chat.
+        O Trama precisa estar aberto.
+      </p>
+      <label className="field">
+        <span>Endereço</span>
+        <div className="row">
+          <input readOnly value={info.url} onFocus={(e) => e.target.select()} />
+          <button onClick={() => copy(info.url)}>Copiar</button>
+        </div>
+      </label>
+      {rows.map(([label, value]) => (
+        <label className="field" key={label}>
+          <span>{label}</span>
+          <div className="mcp-snippet">
+            <pre>{value}</pre>
+            <button onClick={() => copy(value)}>Copiar</button>
+          </div>
+        </label>
+      ))}
+      <p className="hint">
+        {info.tools.length} ferramentas. Se a porta {info.port} estiver ocupada quando o Trama abrir, ele usa a próxima livre e o endereço muda: confira aqui.
+      </p>
+    </section>
+  );
+}
+
 /** Um bloco por provedor: chave, modelo e endereço salvos separadamente. */
 function ProviderSettings({ settings, onSaved, initial, setMessage }) {
   const providers = settings?.providers || {};
@@ -304,6 +348,8 @@ export default function Settings({ settings, onClose, onSaved, initialProvider }
             </>
           )}
         </section>
+
+        <McpSettings setMessage={setMessage} />
 
         {message && <div className="message">{message}</div>}
         <div className="modal-footer">

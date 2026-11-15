@@ -199,6 +199,8 @@ export const EXPORT_FORMATS = {
   glb: { ext: 'glb', type: 'model/gltf-binary', label: 'GLB (com textura)' },
   stl: { ext: 'stl', type: 'model/stl', label: 'STL (impressão 3D)' },
   obj: { ext: 'obj', type: 'model/obj', label: 'OBJ (só a malha)' },
+  // Só para modelos com esqueleto: o workflow de rig salva o FBX ao lado do GLB.
+  fbx: { ext: 'fbx', type: 'application/octet-stream', label: 'FBX (com esqueleto)', sibling: true },
 };
 
 /** Converte um GLB para o formato pedido. */

@@ -696,5 +696,230 @@ class TramaAnalyzeAudio:
         return {"ui": {"text": [text]}, "result": (text,)}
 
 
-NODE_CLASS_MAPPINGS = {"TramaMatchVolume": TramaMatchVolume, "TramaAnalyzeAudio": TramaAnalyzeAudio, "TramaMixAudio": TramaMixAudio, "TramaAudioWindow": TramaAudioWindow, "TramaAceRepaint": TramaAceRepaint, "TramaRepaintSplice": TramaRepaintSplice, "TramaTranscribeAudio": TramaTranscribeAudio}
-NODE_DISPLAY_NAME_MAPPINGS = {"TramaMatchVolume": "Igualar volume (Trama)", "TramaAnalyzeAudio": "Analisar áudio (Trama)", "TramaMixAudio": "Juntar áudios (Trama)", "TramaAudioWindow": "Trecho para regerar (Trama)", "TramaAceRepaint": "Repaint do ACE-Step 1.5 (Trama)", "TramaRepaintSplice": "Colar trecho na música (Trama)", "TramaTranscribeAudio": "Transcrever voz (Trama)"}
+# ---- Modelo 3D com esqueleto ---------------------------------------------------
+# O UniRig devolve um FBX com esqueleto e pesos. O Trama mostra e exporta GLB, então
+# este nó converte o FBX em GLB com o Blender que o ComfyUI-UniRig instalou no
+# ambiente isolado dele (comfy-env), e devolve os dois arquivos como saída.
+
+_BLENDER_SCRIPT = r'''
+import sys, bpy
+src, dst = sys.argv[-2], sys.argv[-1]
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.import_scene.fbx(filepath=src, automatic_bone_orientation=True)
+bpy.ops.file.pack_all()
+# O FBX volta com a transparência da textura ligada ao material: no GLB isso vira BLEND e o
+# visualizador desenha o modelo com partes sumindo. O exportador do Blender 4.2 decide pela
+# ligação no Alpha do Principled BSDF, então ela é desligada.
+for mat in bpy.data.materials:
+    mat.blend_method = "OPAQUE"
+    if mat.use_nodes:
+        for node in mat.node_tree.nodes:
+            alpha = node.inputs.get("Alpha") if node.type == "BSDF_PRINCIPLED" else None
+            if alpha is not None:
+                for link in list(alpha.links):
+                    mat.node_tree.links.remove(link)
+                alpha.default_value = 1.0
+bpy.ops.export_scene.gltf(filepath=dst, export_format="GLB", export_skins=True, export_animations=True, export_yup=True, export_image_format="AUTO")
+arm = [o for o in bpy.data.objects if o.type == "ARMATURE"]
+print("TRAMA_BONES", sum(len(a.data.bones) for a in arm))
+'''
+
+
+def _blender_python():
+    import glob
+    import os
+    env = os.environ.get("TRAMA_BLENDER_PYTHON")
+    if env and os.path.exists(env):
+        return env
+    base = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "comfy-env", "envs")
+    found = sorted(glob.glob(os.path.join(base, "*", ".pixi", "envs", "default", "python.exe")), key=lambda p: ("unirig" not in p.lower(), p))
+    for py in found:
+        if glob.glob(os.path.join(os.path.dirname(py), "Lib", "site-packages", "bpy*")):
+            return py
+    raise RuntimeError("Não achei o Blender (bpy) do ComfyUI-UniRig. Instale o ComfyUI-UniRig ou defina TRAMA_BLENDER_PYTHON.")
+
+
+class TramaLoadMesh:
+    """Carrega um modelo 3D da pasta input para os nós do UniRig.
+
+    O UniRig: Load Mesh lista os arquivos de input/3d só quando o ComfyUI abre, então
+    um modelo enviado depois é recusado ("Value not in list"). Este nó recebe o caminho
+    como texto e devolve a malha (trimesh), que o comfy-env passa ao ambiente do UniRig.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "mesh": ("STRING", {"default": "3d/realistic_male_character.glb",
+                                    "tooltip": "Caminho do modelo dentro da pasta input (GLB, GLTF, OBJ, PLY, STL)."}),
+            }
+        }
+
+    RETURN_TYPES = ("TRIMESH",)
+    RETURN_NAMES = ("mesh",)
+    FUNCTION = "load"
+    CATEGORY = "Trama"
+
+    @classmethod
+    def IS_CHANGED(cls, mesh):
+        import os
+        import folder_paths
+        path = os.path.join(folder_paths.get_input_directory(), mesh)
+        return os.path.getmtime(path) if os.path.exists(path) else mesh
+
+    def load(self, mesh):
+        import os
+        import folder_paths
+        import trimesh
+
+        root = folder_paths.get_input_directory()
+        path = os.path.abspath(os.path.join(root, mesh))
+        if not path.lower().startswith(os.path.abspath(root).lower() + os.sep):
+            raise ValueError("O modelo precisa estar dentro da pasta input do ComfyUI.")
+        if not os.path.exists(path):
+            raise ValueError(f"Modelo não encontrado: {mesh}")
+        loaded = trimesh.load(path, process=False, maintain_order=True)
+        if isinstance(loaded, trimesh.Scene):
+            loaded = loaded.to_geometry()
+        if loaded is None or len(loaded.vertices) == 0 or len(loaded.faces) == 0:
+            raise ValueError(f"O modelo está vazio: {mesh}")
+        keep = loaded.unique_faces() & loaded.nondegenerate_faces()
+        if not keep.all():
+            loaded.update_faces(keep)
+        loaded.remove_unreferenced_vertices()
+        print(f"[Trama] modelo carregado: {len(loaded.vertices)} vértices, {len(loaded.faces)} faces")
+        return (loaded,)
+
+
+class TramaRiggedToGlb:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "fbx_output_path": ("STRING", {"forceInput": True, "tooltip": "FBX com esqueleto (saída do UniRig: Auto Rig), relativo à pasta output."}),
+                "filename_prefix": ("STRING", {"default": "trama/trama_3d_rig"}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("glb_path",)
+    FUNCTION = "convert"
+    OUTPUT_NODE = True
+    CATEGORY = "Trama"
+    DESCRIPTION = "Converte o FBX com esqueleto do UniRig em GLB (com ossos e pesos) e salva os dois na pasta output."
+
+    def convert(self, fbx_output_path, filename_prefix):
+        import os
+        import shutil
+        import subprocess
+        import tempfile
+        import folder_paths
+
+        out_dir = folder_paths.get_output_directory()
+        src = fbx_output_path if os.path.isabs(fbx_output_path) else os.path.join(out_dir, fbx_output_path)
+        if not os.path.exists(src):
+            raise RuntimeError(f"FBX não encontrado: {src}")
+        full_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(filename_prefix, out_dir)
+        os.makedirs(full_folder, exist_ok=True)
+        stem = f"{filename}_{counter:05}_"
+        glb = os.path.join(full_folder, stem + ".glb")
+        fbx = os.path.join(full_folder, stem + ".fbx")
+        shutil.copy(src, fbx)
+
+        py = _blender_python()
+        root = os.path.dirname(py)
+        env = dict(os.environ)
+        env["PATH"] = os.pathsep.join([root, os.path.join(root, "Library", "bin"), os.path.join(root, "Library", "mingw-w64", "bin"), os.path.join(root, "Scripts"), env.get("PATH", "")])
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as f:
+            f.write(_BLENDER_SCRIPT)
+            script = f.name
+        try:
+            r = subprocess.run([py, script, fbx, glb], env=env, capture_output=True, text=True, timeout=600)
+        finally:
+            os.unlink(script)
+        if r.returncode != 0 or not os.path.exists(glb):
+            raise RuntimeError(f"O Blender não converteu o FBX: {(r.stderr or r.stdout)[-800:]}")
+        bones = next((l.split()[-1] for l in r.stdout.splitlines() if l.startswith("TRAMA_BONES")), "?")
+        print(f"[Trama] GLB com esqueleto: {glb} ({bones} ossos)")
+        # Só o GLB é o resultado (vira o card); o FBX fica ao lado, com o mesmo nome, para o Exportar.
+        files = [{"filename": os.path.basename(glb), "subfolder": subfolder, "type": "output"}]
+        rel = os.path.relpath(glb, out_dir)
+        return {"ui": {"3d": files, "text": [f"{bones} ossos"]}, "result": (rel,)}
+
+
+# ---- Imagem para 3D: objeto escuro ------------------------------------------
+class TramaContrastBackground:
+    """Cor de fundo para recortar o objeto antes do TRELLIS.2.
+
+    O TRELLIS.2 espera o objeto sobre fundo preto. Com um personagem quase todo preto
+    (desenho preto e branco, roupa escura), o objeto some no fundo e a textura sai
+    preta e metálica. Este nó mede o objeto pela máscara e devolve preto quando ele é
+    claro o bastante e cinza médio quando é escuro.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "mask": ("MASK",),
+                "dark_share": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.05,
+                                         "tooltip": "Fração do objeto que precisa ser escura para trocar o fundo preto pelo cinza."}),
+            }
+        }
+
+    # COLOR: o tipo do campo background do Crop Image to Mask (um hex como "#808080").
+    RETURN_TYPES = ("COLOR", "BOOLEAN")
+    RETURN_NAMES = ("background", "dark")
+    FUNCTION = "pick"
+    CATEGORY = "Trama"
+
+    def pick(self, image, mask, dark_share):
+        img = image[0].float()  # [H, W, C]
+        m = mask[0].float() if mask.dim() == 3 else mask.float()
+        if m.shape != img.shape[:2]:
+            m = torch.nn.functional.interpolate(m[None, None], size=img.shape[:2], mode="bilinear")[0, 0]
+        inside = m > 0.5
+        if int(inside.sum()) == 0:
+            return ("#000000", False)
+        luma = (img[..., :3] * torch.tensor([0.299, 0.587, 0.114], device=img.device)).sum(-1)
+        dark = float((luma[inside] < 0.18).float().mean())
+        color = "#808080" if dark >= dark_share else "#000000"
+        print(f"[Trama] fundo para o 3D: {color} ({dark:.0%} do objeto é escuro)")
+        return (color, dark >= dark_share)
+
+
+class TramaLimitMetallic:
+    """Tira o metal da textura de um objeto escuro.
+
+    Em personagem preto (desenho, roupa escura) o TRELLIS.2 entende "preto brilhante" e
+    devolve o mapa de metal quase todo em 1: o modelo fica escuro como um espelho no
+    visualizador. Com active ligado (saída dark do TramaContrastBackground), o metal
+    é limitado ao valor de limit; com active desligado, o mapa passa sem mudança.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "metallic": ("IMAGE",),
+                "active": ("BOOLEAN", {"default": True, "forceInput": True}),
+                "limit": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.05}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("metallic",)
+    FUNCTION = "limit_metal"
+    CATEGORY = "Trama"
+
+    def limit_metal(self, metallic, active, limit):
+        if not active:
+            return (metallic,)
+        print(f"[Trama] objeto escuro: metal limitado a {limit}")
+        return (metallic.clamp(max=float(limit)),)
+
+
+NODE_CLASS_MAPPINGS = {"TramaMatchVolume": TramaMatchVolume, "TramaAnalyzeAudio": TramaAnalyzeAudio, "TramaMixAudio": TramaMixAudio, "TramaAudioWindow": TramaAudioWindow, "TramaAceRepaint": TramaAceRepaint, "TramaRepaintSplice": TramaRepaintSplice, "TramaTranscribeAudio": TramaTranscribeAudio, "TramaLoadMesh": TramaLoadMesh, "TramaRiggedToGlb": TramaRiggedToGlb, "TramaContrastBackground": TramaContrastBackground, "TramaLimitMetallic": TramaLimitMetallic}
+NODE_DISPLAY_NAME_MAPPINGS = {"TramaMatchVolume": "Igualar volume (Trama)", "TramaAnalyzeAudio": "Analisar áudio (Trama)", "TramaMixAudio": "Juntar áudios (Trama)", "TramaAudioWindow": "Trecho para regerar (Trama)", "TramaAceRepaint": "Repaint do ACE-Step 1.5 (Trama)", "TramaRepaintSplice": "Colar trecho na música (Trama)", "TramaTranscribeAudio": "Transcrever voz (Trama)", "TramaLoadMesh": "Carregar modelo 3D (Trama)", "TramaRiggedToGlb": "Esqueleto: FBX para GLB (Trama)", "TramaContrastBackground": "Fundo com contraste para 3D (Trama)", "TramaLimitMetallic": "Limitar metal (Trama)"}

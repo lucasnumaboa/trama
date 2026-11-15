@@ -3,6 +3,9 @@
 import { convertWorkflow, findInputSpec, comboOptions, isWidgetSpec } from './convert.js';
 
 const MEDIA_FLAGS = { image_upload: 'image', video_upload: 'video', audio_upload: 'audio' };
+// Nós de terceiros que carregam um modelo 3D de uma lista de arquivos (sem botão de upload):
+// o campo vira um slot de mídia do tipo modelo 3D, e o Trama põe o arquivo na pasta input.
+const MESH_LOADERS = { UniRigLoadMesh: 'file_path', TramaLoadMesh: 'mesh' };
 const MODEL_FILE = /\.(safetensors|ckpt|pt|pth|bin|gguf|sft|onnx)$/i;
 const IMPORTANT = new Set([
   'width', 'height', 'length', 'steps', 'cfg', 'denoise', 'batch_size', 'duration', 'seconds',
@@ -70,7 +73,7 @@ export function describeWorkflow(name, workflow, objectInfo) {
       const spec = findInputSpec(def, input);
       if (!spec || !isWidgetSpec(spec)) continue;
       const [rawType, opts = {}] = spec;
-      const media = mediaFlag(spec);
+      const media = MESH_LOADERS[type] === input ? 'model3d' : mediaFlag(spec);
       if (media) {
         mediaInputs.push({ id: `media:${id}`, nodeId: id, input, title, kind: media, default: value });
         continue;

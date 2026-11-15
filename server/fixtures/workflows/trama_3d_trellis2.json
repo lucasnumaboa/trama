@@ -1,8 +1,8 @@
 {
   "id": "aa77013b-18f1-4679-9678-6d455d3536c5",
   "revision": 0,
-  "last_node_id": 314,
-  "last_link_id": 1315,
+  "last_node_id": 316,
+  "last_link_id": 1321,
   "nodes": [
     {
       "id": 91,
@@ -300,7 +300,7 @@
           "name": "metallic",
           "shape": 7,
           "type": "IMAGE",
-          "link": 1297
+          "link": 1321
         },
         {
           "name": "roughness",
@@ -388,7 +388,7 @@
           "name": "metallic",
           "type": "IMAGE",
           "links": [
-            1297
+            1320
           ]
         },
         {
@@ -684,7 +684,8 @@
           "name": "mask",
           "type": "MASK",
           "links": [
-            1314
+            1314,
+            1317
           ]
         }
       ],
@@ -1789,7 +1790,8 @@
           "type": "IMAGE",
           "links": [
             888,
-            1260
+            1260,
+            1316
           ]
         },
         {
@@ -1837,6 +1839,14 @@
           "name": "masks",
           "type": "MASK",
           "link": 1314
+        },
+        {
+          "name": "background",
+          "type": "COLOR",
+          "widget": {
+            "name": "background"
+          },
+          "link": 1318
         }
       ],
       "outputs": [
@@ -1887,7 +1897,7 @@
       "title": "Como usar",
       "properties": {},
       "widgets_values": [
-        "## Imagem → modelo 3D — TRELLIS.2 (malha com textura, GLB)\nRecebe **uma imagem de um objeto ou personagem** e devolve um modelo 3D com textura (GLB), pronto para girar, exportar ou imprimir.\n- O fundo é removido sozinho (BiRefNet) e o objeto é recortado no centro.\n- Funciona melhor com **um único objeto inteiro**, bem iluminado, de frente ou em três quartos, sem partes cortadas pela borda.\n- Não tem prompt: o que manda no resultado é a imagem. Para mudar o modelo, mude a imagem (edite com um workflow de imagem) e gere de novo.\n- **Resolução da textura**: 2048 (padrão) ou 4096 para mais detalhe.\n- Leva alguns minutos na 3090."
+        "## Imagem → modelo 3D — TRELLIS.2 (malha com textura, GLB)\nRecebe **uma imagem de um objeto ou personagem** e devolve um modelo 3D com textura (GLB), pronto para girar, exportar ou imprimir.\n- O fundo é removido sozinho (BiRefNet) e o objeto é recortado no centro.\n- Funciona melhor com **um único objeto inteiro**, bem iluminado, de frente ou em três quartos, sem partes cortadas pela borda.\n- Personagem escuro (desenho preto e branco, roupa preta): o Trama recorta sobre fundo cinza em vez de preto e tira o metal da textura, senão o modelo sai todo preto.\n- Não tem prompt: o que manda no resultado é a imagem. Para mudar o modelo, mude a imagem (edite com um workflow de imagem) e gere de novo.\n- **Resolução da textura**: 2048 (padrão) ou 4096 para mais detalhe.\n- Leva alguns minutos na 3090."
       ],
       "widgets_values_named": {
         "text": "\n**Input Assets** \n\n- [viking_wolf_rune_axe.png](https://raw.githubusercontent.com/Comfy-Org/workflow_templates/refs/heads/main/input/viking_wolf_rune_axe.png) — required workflow input (`input/viking_wolf_rune_axe.png`)\n\n## Model Links\n\n- [Hugging Face:Comfy-Org/Pixal3D](https://huggingface.co/Comfy-Org/Pixal3D)\n- [ModelScope:Comfy-Org/Pixal3D](https://modelscope.cn/models/Comfy-Org/Pixal3D)\n- [Hugging Face:Comfy-Org/MoGe](https://huggingface.co/Comfy-Org/MoGe)\n- [ModelScope:Comfy-Org/MoGe](https://modelscope.cn/models/Comfy-Org/MoGe)\n- [Hugging Face:Comfy-Org/BiRefNet](https://huggingface.co/Comfy-Org/BiRefNet)\n- [ModelScope:Comfy-Org/BiRefNet](https://modelscope.cn/models/Comfy-Org/BiRefNet)\n- [Hugging Face:Comfy-Org/TRELLIS.2](https://huggingface.co/Comfy-Org/TRELLIS.2)\n- [ModelScope:Comfy-Org/TRELLIS.2](https://modelscope.cn/models/Comfy-Org/TRELLIS.2)\n\n\n**vae**\n\n- [trellis_2_texture_vae_bf16.safetensors](https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/vae/trellis_2_texture_vae_bf16.safetensors) (904.5 MB)\n- [trellis_2_shape_vae_bf16.safetensors](https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/vae/trellis_2_shape_vae_bf16.safetensors) (1.02 GB)\n\n**clip_vision**\n\n- [dino_v3_L_naf_fp32.safetensors](https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/clip_vision/dino_v3_L_naf_fp32.safetensors) (1.13 GB)\n\n**geometry_estimation**\n\n- [moge_2_vitl_normal_fp16.safetensors](https://huggingface.co/Comfy-Org/MoGe/resolve/main/geometry_estimation/moge_2_vitl_normal_fp16.safetensors) (631.2 MB)\n\n**background_removal**\n\n- [birefnet.safetensors](https://huggingface.co/Comfy-Org/BiRefNet/resolve/main/background_removal/birefnet.safetensors) (423.9 MB)\n\n**diffusion_models**\n\n- [trellis_2_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/TRELLIS.2/resolve/main/diffusion_models/trellis_2_int8_convrot.safetensors) (4.89 GB)\n- [pixal3d_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/diffusion_models/pixal3d_int8_convrot.safetensors) (5.2 GB)\n\n\n## Model Storage Location\n\n```\n📂 ComfyUI/\n├── 📂 models/\n│   ├── 📂 vae/\n│   │   ├── trellis_2_texture_vae_bf16.safetensors\n│   │   └── trellis_2_shape_vae_bf16.safetensors\n│   ├── 📂 clip_vision/\n│   │   └── dino_v3_L_naf_fp32.safetensors\n│   ├── 📂 geometry_estimation/\n│   │   └── moge_2_vitl_normal_fp16.safetensors\n│   ├── 📂 background_removal/\n│   │   └── birefnet.safetensors\n│   └── 📂 diffusion_models/\n│       ├── trellis_2_int8_convrot.safetensors\n│       └── pixal3d_int8_convrot.safetensors\n```\n\n## Report Issue\n\nNote: Please update ComfyUI first ([guide](https://docs.comfy.org/installation/update_comfyui)) and prepare required models. Desktop/Cloud updates follow stable releases, so some nightly-supported models may not be available yet.\n\n- Cannot run / runtime errors: [ComfyUI/issues](https://github.com/comfyanonymous/ComfyUI/issues)\n- UI / frontend issues: [ComfyUI_frontend/issues](https://github.com/Comfy-Org/ComfyUI_frontend/issues)\n- Workflow issues: [workflow_templates/issues](https://github.com/Comfy-Org/workflow_templates/issues)\n"
@@ -1923,6 +1933,99 @@
       },
       "widgets_values": [
         "trama/trama_3d_trellis2"
+      ]
+    },
+    {
+      "id": 315,
+      "type": "TramaContrastBackground",
+      "pos": [
+        -3760,
+        980
+      ],
+      "size": [
+        320,
+        100
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "title": "Fundo com contraste",
+      "properties": {
+        "Node name for S&R": "TramaContrastBackground"
+      },
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1316
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": 1317
+        }
+      ],
+      "outputs": [
+        {
+          "name": "background",
+          "type": "COLOR",
+          "links": [
+            1318
+          ]
+        },
+        {
+          "name": "dark",
+          "type": "BOOLEAN",
+          "links": [
+            1319
+          ]
+        }
+      ],
+      "widgets_values": [
+        0.35
+      ]
+    },
+    {
+      "id": 316,
+      "type": "TramaLimitMetallic",
+      "pos": [
+        2850,
+        980
+      ],
+      "size": [
+        300,
+        90
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "title": "Sem metal em objeto escuro",
+      "properties": {
+        "Node name for S&R": "TramaLimitMetallic"
+      },
+      "inputs": [
+        {
+          "name": "metallic",
+          "type": "IMAGE",
+          "link": 1320
+        },
+        {
+          "name": "active",
+          "type": "BOOLEAN",
+          "link": 1319
+        }
+      ],
+      "outputs": [
+        {
+          "name": "metallic",
+          "type": "IMAGE",
+          "links": [
+            1321
+          ]
+        }
+      ],
+      "widgets_values": [
+        0
       ]
     }
   ],
@@ -2328,14 +2431,6 @@
       "INT"
     ],
     [
-      1297,
-      147,
-      1,
-      210,
-      2,
-      "IMAGE"
-    ],
-    [
       1298,
       147,
       2,
@@ -2454,6 +2549,54 @@
       314,
       0,
       "FILE_3D_GLB"
+    ],
+    [
+      1316,
+      122,
+      0,
+      315,
+      0,
+      "IMAGE"
+    ],
+    [
+      1317,
+      192,
+      0,
+      315,
+      1,
+      "MASK"
+    ],
+    [
+      1318,
+      315,
+      0,
+      312,
+      2,
+      "COLOR"
+    ],
+    [
+      1319,
+      315,
+      1,
+      316,
+      1,
+      "BOOLEAN"
+    ],
+    [
+      1320,
+      147,
+      1,
+      316,
+      0,
+      "IMAGE"
+    ],
+    [
+      1321,
+      316,
+      0,
+      210,
+      2,
+      "IMAGE"
     ]
   ],
   "groups": [

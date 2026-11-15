@@ -60,10 +60,11 @@ export async function listWorkflows() {
 export const loadWorkflow = (name) => getJson(`/api/userdata/${encodeURIComponent(`workflows/${name}`)}`);
 
 /** Envia um arquivo para a pasta input do ComfyUI. Devolve o nome a usar nos nós Load*. */
-export async function uploadInput(buffer, filename, { overwrite = true } = {}) {
+export async function uploadInput(buffer, filename, { overwrite = true, subfolder = '' } = {}) {
   const form = new FormData();
   form.append('image', new Blob([buffer]), filename);
   form.append('type', 'input');
+  if (subfolder) form.append('subfolder', subfolder);
   form.append('overwrite', overwrite ? 'true' : 'false');
   const data = await getJson('/upload/image', { method: 'POST', body: form, timeout: 600000 });
   return data.subfolder ? `${data.subfolder}/${data.name}` : data.name;
@@ -218,13 +219,32 @@ export async function runPrompt(prompt, { onEvent = () => {}, signal } = {}) {
   // Parado enquanto o POST estava no ar: o evento já passou, então cancela aqui.
   if (signal?.aborted) onAbort();
 
+  // O pedido sumiu (o ComfyUI caiu ou reiniciou no meio): sem isto o card ficava
+  // "gerando" para sempre. Confere a fila de tempos em tempos quando não há histórico.
+  let lastQueueCheck = Date.now();
+  let missingSince = null;
   try {
     // Polling de /history como garantia (o WebSocket só acelera).
     for (;;) {
       if (signal?.aborted) throw new Error('Cancelado');
-      const history = await getJson(`/history/${promptId}`).catch(() => ({}));
-      const entry = history[promptId];
+      const history = await getJson(`/history/${promptId}`).catch(() => null);
+      const entry = history?.[promptId];
       if (entry?.status?.completed || entry?.status?.status_str === 'error') return checkHistory(entry, prompt);
+      if (!entry && Date.now() - lastQueueCheck > 5000) {
+        lastQueueCheck = Date.now();
+        const queue = history ? await getJson('/queue').catch(() => null) : null;
+        const inQueue = queue && [...(queue.queue_running || []), ...(queue.queue_pending || [])].some((q) => q[1] === promptId);
+        if (inQueue) missingSince = null;
+        else {
+          missingSince ??= Date.now();
+          // ComfyUI fora do ar: espera até 2 min (pode estar reiniciando). No ar e sem o pedido: 15 s.
+          if (Date.now() - missingSince > (queue ? 15000 : 120000)) {
+            throw new Error(queue
+              ? 'O ComfyUI reiniciou ou perdeu este pedido no meio da geração (veja se ele fechou sozinho). Gere de novo.'
+              : 'O ComfyUI parou de responder no meio da geração (fechou ou travou). Abra o ComfyUI e gere de novo.');
+          }
+        }
+      }
       // Espera o aviso do WebSocket ou 1,5 s; depois do aviso, consulta a cada 300 ms.
       if (wsDone) await new Promise((r) => setTimeout(r, 300));
       else await Promise.race([done, new Promise((r) => setTimeout(r, 1500))]);
