@@ -136,6 +136,7 @@ export function ModelViewer({ url, title, onFix, busy }) {
         environment-image="neutral"
         exposure="1.05"
         interaction-prompt="none"
+        autoplay=""
       >
         {mark && <button slot="hotspot-fix" className="model-hotspot" data-position={mark.position} data-normal={mark.normal} aria-label="Ponto a corrigir" />}
       </model-viewer>
@@ -225,7 +226,7 @@ export function ExportMenu({ file, title, rigged }) {
           </button>
           {rigged && (
             <button onClick={() => go('fbx')}>
-              <b>FBX</b> <span>com esqueleto: Mixamo, Unity, Unreal</span>
+              <b>FBX</b> <span>com esqueleto (e a animação): Unity, Unreal, Blender</span>
             </button>
           )}
         </div>

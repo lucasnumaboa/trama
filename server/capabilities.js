@@ -20,6 +20,7 @@ export const CATEGORIES = [
   { id: 'voice_edit', label: 'Edição de voz', description: 'Troca a voz de um áudio pela voz de referência' },
   { id: 'model3d_create', label: 'Criar modelo 3D', description: 'Imagem de um objeto ou personagem para modelo 3D com textura (GLB)' },
   { id: 'model3d_rig', label: 'Esqueleto 3D (rig)', description: 'Põe esqueleto e pesos num modelo 3D (pessoa, bicho, monstro) para animar: GLB e FBX' },
+  { id: 'model3d_animate', label: 'Animar modelo 3D', description: 'Anima um modelo 3D com esqueleto humanoide: andar, correr, pular ou parado (GLB que toca a animação e FBX)' },
 ];
 
 // [categoria, workflow, nome exibido]
@@ -56,6 +57,7 @@ const BUILTIN = [
   ['model3d_create', 'trama_3d_trellis2.json', 'TRELLIS.2 (imagem → modelo 3D, mais nítido)'],
   ['model3d_create', 'trama_3d_pixal3d.json', 'Pixal3D (segue o ângulo da foto; textura menos nítida)'],
   ['model3d_rig', 'trama_3d_rig.json', 'UniRig (qualquer personagem: humanoide com ossos do Mixamo, ou bicho e monstro)'],
+  ['model3d_animate', 'trama_3d_animar.json', 'Movimento gerado no Trama (andar, correr, pular, parado; esqueleto humanoide)'],
 ];
 
 // Modelo padrão de fábrica de cada categoria.
@@ -70,6 +72,7 @@ const BUILTIN_DEFAULTS = {
   voice_edit: 'trama_trocar_voz.json',
   model3d_create: 'trama_3d_trellis2.json',
   model3d_rig: 'trama_3d_rig.json',
+  model3d_animate: 'trama_3d_animar.json',
 };
 
 let store = null;

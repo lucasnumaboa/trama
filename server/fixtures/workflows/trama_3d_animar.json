@@ -1,0 +1,43 @@
+{
+  "id": "9b2e7c51-4d0a-4f3e-8a61-2c5d7e9f1a03",
+  "revision": 0,
+  "last_node_id": 2,
+  "last_link_id": 0,
+  "nodes": [
+    {
+      "id": 2,
+      "type": "MarkdownNote",
+      "pos": [-640, -40],
+      "size": [520, 460],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Como usar",
+      "properties": {},
+      "widgets_values": [
+        "## Modelo 3D com esqueleto → animação — Trama\nRecebe **um modelo 3D com esqueleto humanoide** (a saída do workflow de esqueleto com o template `mixamo`) e devolve o mesmo modelo **animado**. Sai em GLB (o card toca a animação) e FBX (Exportar: Unity, Unreal, Blender).\n- **motion**: `walk` (andar), `run` (correr), `jump` (pular) ou `idle` (parado, respirando).\n- **seconds**: duração do loop de andar, correr e parado (arredonda para ciclos inteiros, para o loop fechar sem pulo). O pulo dura 1,55 s.\n- O movimento é gerado no Trama, direto nos ossos: não precisa de arquivo de animação de fora.\n- Andar e correr são no lugar (sem sair do ponto), como os jogos esperam.\n- Só anima esqueleto humanoide. Bicho ou monstro (template `articulationxl`) dá erro.\n- Leva de 10 a 30 segundos. Precisa dos nós ComfyUI-Trama e ComfyUI-UniRig (o Blender dele)."
+      ]
+    },
+    {
+      "id": 1,
+      "type": "TramaAnimate3D",
+      "pos": [-60, 0],
+      "size": [360, 150],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [{ "name": "glb_path", "type": "STRING", "links": [] }],
+      "title": "Animar modelo 3D",
+      "properties": { "Node name for S&R": "TramaAnimate3D" },
+      "widgets_values": ["3d/modelo_com_esqueleto.glb", "walk", 2, "trama/trama_3d_animado"]
+    }
+  ],
+  "links": [],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

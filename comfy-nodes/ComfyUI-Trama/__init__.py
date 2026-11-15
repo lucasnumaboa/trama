@@ -706,6 +706,16 @@ import sys, bpy
 src, dst = sys.argv[-2], sys.argv[-1]
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.fbx(filepath=src, automatic_bone_orientation=True)
+# O FBX do UniRig vem com o esqueleto em escala 0,01 e girado: aplica escala e rotação para o
+# GLB sair limpo, em metros (os jogos e o Trama medem o tamanho certo).
+bpy.ops.object.select_all(action="DESELECT")
+for o in bpy.data.objects:
+    if o.type in ("ARMATURE", "MESH"):
+        o.select_set(True)
+arms = [o for o in bpy.data.objects if o.type == "ARMATURE"]
+if arms:
+    bpy.context.view_layer.objects.active = arms[0]
+    bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
 bpy.ops.file.pack_all()
 # O FBX volta com a transparência da textura ligada ao material: no GLB isso vira BLEND e o
 # visualizador desenha o modelo com partes sumindo. O exportador do Blender 4.2 decide pela
@@ -737,6 +747,233 @@ def _blender_python():
         if glob.glob(os.path.join(os.path.dirname(py), "Lib", "site-packages", "bpy*")):
             return py
     raise RuntimeError("Não achei o Blender (bpy) do ComfyUI-UniRig. Instale o ComfyUI-UniRig ou defina TRAMA_BLENDER_PYTHON.")
+
+
+def _run_blender(script_text, args, timeout=900):
+    """Roda um script no Blender (bpy) do ambiente do UniRig e devolve stdout+stderr."""
+    import os
+    import subprocess
+    import tempfile
+    py = _blender_python()
+    root = os.path.dirname(py)
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join([root, os.path.join(root, "Library", "bin"), os.path.join(root, "Library", "mingw-w64", "bin"), os.path.join(root, "Scripts"), env.get("PATH", "")])
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as f:
+        f.write(script_text)
+        path = f.name
+    try:
+        r = subprocess.run([py, path, *args], env=env, capture_output=True, text=True, timeout=timeout, encoding="utf-8", errors="replace")
+    finally:
+        os.unlink(path)
+    out = (r.stdout or "") + (r.stderr or "")
+    err = next((l[len("TRAMA_ERROR "):] for l in out.splitlines() if l.startswith("TRAMA_ERROR ")), None)
+    if err:
+        raise RuntimeError(err)
+    if r.returncode != 0:
+        raise RuntimeError(f"O Blender falhou: {out[-800:]}")
+    return out
+
+
+_ANIMATE_SCRIPT = r'''
+import sys, math, bpy
+from mathutils import Vector, Quaternion
+
+src, dst_glb, dst_fbx, motion, seconds = sys.argv[-5:]
+seconds = float(seconds)
+FPS = 30
+
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.import_scene.gltf(filepath=src)
+arm = next((o for o in bpy.data.objects if o.type == "ARMATURE"), None)
+if arm is None:
+    print("TRAMA_ERROR o modelo não tem esqueleto: passe antes pelo workflow de esqueleto (rig).")
+    sys.exit(2)
+
+
+def find(name):
+    for b in arm.data.bones:
+        n = b.name.split(":")[-1]
+        if n.startswith("mixamorig"):
+            n = n[len("mixamorig"):]
+        if n == name:
+            return b.name
+    return None
+
+
+NEED = ["Hips", "Spine", "LeftUpLeg", "LeftLeg", "LeftFoot", "RightUpLeg", "RightLeg", "RightFoot", "LeftArm", "LeftForeArm", "RightArm", "RightForeArm"]
+B = {n: find(n) for n in NEED + ["Spine1", "Spine2", "Neck", "Head", "LeftToeBase", "RightToeBase"]}
+missing = [n for n in NEED if not B[n]]
+if missing:
+    print("TRAMA_ERROR a animação precisa de um esqueleto humanoide (template mixamo); faltam os ossos " + ", ".join(missing))
+    sys.exit(2)
+
+bones = arm.data.bones
+head = lambda n: bones[B[n]].head_local.copy()
+UP = (arm.matrix_world.inverted().to_3x3() @ Vector((0, 0, 1))).normalized()
+toe = B["LeftToeBase"] or B["RightToeBase"]
+fwd = (bones[toe].head_local - head("LeftFoot")) if toe else Vector((0, -1, 0))
+fwd = fwd - UP * fwd.dot(UP)
+F = fwd.normalized() if fwd.length > 1e-6 else Vector((0, -1, 0))
+S = F.cross(UP).normalized()  # girar +θ em S leva para a frente um osso que aponta para baixo
+LEG = max(1e-3, (head("Hips") - head("LeftFoot")).dot(UP))
+rad = math.radians
+
+
+def q(axis, deg):
+    return Quaternion(axis, rad(deg))
+
+
+def arm_down(side):
+    v = (head(side + "ForeArm") - head(side + "Arm")).normalized()
+    elev = math.degrees(math.asin(max(-1, min(1, v.dot(UP)))))
+    need = 72 + elev  # deixa o braço 72° abaixo da horizontal
+    sign = 1 if (q(F, need) @ v).dot(UP) < v.dot(UP) else -1
+    return F, sign * need, v
+
+
+DOWN = {s: arm_down(s) for s in ("Left", "Right")}
+
+
+def elbow_axis(side):
+    v = DOWN[side][2]
+    sign = 1 if (q(UP, 20) @ v).dot(F) > v.dot(F) else -1
+    return UP, sign
+
+
+ELBOW = {s: elbow_axis(s) for s in ("Left", "Right")}
+
+
+def to_local(name, q_arm):
+    m = bones[name].matrix_local.to_3x3().normalized().to_quaternion()
+    return m.inverted() @ q_arm @ m
+
+
+def smooth(a, b, x):
+    x = max(0.0, min(1.0, x))
+    x = x * x * (3 - 2 * x)
+    return a + (b - a) * x
+
+
+# ---- poses: dict de parâmetros em graus / fração da perna ----------------------
+BASE = dict(hips_up=0, hips_fwd=0, lean=0, twist=0, sway=0, nod=0,
+            thighL=0, thighR=0, kneeL=4, kneeR=4, footL=0, footR=0,
+            swingL=0, swingR=0, elbowL=18, elbowR=18)
+
+
+def cycle(t, T, amp):
+    p = 2 * math.pi * t / T
+    s, c = math.sin(p), math.cos(p)
+    a = amp
+    d = dict(BASE)
+    d.update(
+        thighL=a["thigh"] * s, thighR=-a["thigh"] * s,
+        kneeL=a["knee0"] + a["knee"] * max(0, c), kneeR=a["knee0"] + a["knee"] * max(0, -c),
+        swingL=-a["arm"] * s, swingR=a["arm"] * s,
+        elbowL=a["elbow"], elbowR=a["elbow"],
+        hips_up=a["bob"] * math.cos(2 * p) - a["drop"], lean=a["lean"], twist=a["twist"] * s, sway=a["sway"] * s,
+    )
+    d["footL"] = -(d["thighL"] - d["kneeL"]) * 0.5
+    d["footR"] = -(d["thighR"] - d["kneeR"]) * 0.5
+    return d
+
+
+WALK = dict(thigh=24, knee0=5, knee=38, arm=22, elbow=20, bob=0.025, drop=0.02, lean=3, twist=6, sway=3)
+RUN = dict(thigh=42, knee0=15, knee=75, arm=45, elbow=85, bob=0.05, drop=0.06, lean=12, twist=10, sway=2)
+
+JUMP = [  # (tempo, parâmetros)
+    (0.00, dict()),
+    (0.35, dict(thighL=55, thighR=55, kneeL=100, kneeR=100, footL=45, footR=45, hips_up=-0.28, lean=25, swingL=-50, swingR=-50, elbowL=20, elbowR=20)),
+    (0.50, dict(thighL=-5, thighR=-5, kneeL=0, kneeR=0, footL=-35, footR=-35, hips_up=0.12, lean=-4, swingL=150, swingR=150, elbowL=10, elbowR=10)),
+    (0.75, dict(thighL=35, thighR=35, kneeL=70, kneeR=70, footL=10, footR=10, hips_up=0.45, lean=6, swingL=120, swingR=120, elbowL=25, elbowR=25)),
+    (1.00, dict(thighL=12, thighR=12, kneeL=18, kneeR=18, footL=-10, footR=-10, hips_up=0.04, lean=4, swingL=60, swingR=60)),
+    (1.15, dict(thighL=48, thighR=48, kneeL=90, kneeR=90, footL=42, footR=42, hips_up=-0.24, lean=20, swingL=-20, swingR=-20, elbowL=30, elbowR=30)),
+    (1.55, dict()),
+]
+
+
+def keyed(t, keys):
+    full = [(k, {**BASE, **v}) for k, v in keys]
+    for (t0, a), (t1, b) in zip(full, full[1:]):
+        if t <= t1:
+            x = (t - t0) / max(1e-6, t1 - t0)
+            return {n: smooth(a[n], b[n], x) for n in BASE}
+    return full[-1][1]
+
+
+def idle(t, T=3.0):
+    p = 2 * math.pi * t / T
+    d = dict(BASE)
+    d.update(lean=2 * math.sin(p), hips_up=0.006 * math.sin(p), nod=2 * math.sin(p + 1), swingL=3 * math.sin(p), swingR=3 * math.sin(p + 0.5), elbowL=12, elbowR=12)
+    return d
+
+
+if motion == "walk":
+    T = 1.0
+    pose = lambda t: cycle(t, T, WALK)
+elif motion == "run":
+    T = 0.6
+    pose = lambda t: cycle(t, T, RUN)
+elif motion == "idle":
+    T = 3.0
+    pose = idle
+elif motion == "jump":
+    T = JUMP[-1][0]
+    pose = lambda t: keyed(t, JUMP)
+else:
+    print("TRAMA_ERROR movimento desconhecido: " + motion)
+    sys.exit(2)
+
+loops = 1 if motion == "jump" else max(1, round(seconds / T))
+total = T * loops
+frames = int(round(total * FPS))
+
+scene = bpy.context.scene
+scene.render.fps = FPS
+scene.frame_start = 0
+scene.frame_end = frames - 1 if motion != "jump" else frames
+
+for pb in arm.pose.bones:
+    pb.rotation_mode = "QUATERNION"
+arm.animation_data_create()
+arm.animation_data.action = bpy.data.actions.new(motion)
+
+
+def apply(d, frame):
+    pbs = arm.pose.bones
+    rots = {
+        "Hips": q(UP, d["sway"]),
+        "Spine": q(UP, d["twist"]) @ q(S, -d["lean"]),
+        "LeftUpLeg": q(S, d["thighL"]), "RightUpLeg": q(S, d["thighR"]),
+        "LeftLeg": q(S, -d["kneeL"]), "RightLeg": q(S, -d["kneeR"]),
+        "LeftFoot": q(S, d["footL"]), "RightFoot": q(S, d["footR"]),
+    }
+    if B["Head"]:
+        rots["Head"] = q(S, -d["nod"])
+    for side in ("Left", "Right"):
+        ax, ang, _ = DOWN[side]
+        rots[side + "Arm"] = q(S, d["swing" + side[0]]) @ q(ax, ang)
+        eax, esign = ELBOW[side]
+        rots[side + "ForeArm"] = q(eax, esign * d["elbow" + side[0]])
+    for n, qa in rots.items():
+        pb = pbs[B[n]]
+        pb.rotation_quaternion = to_local(B[n], qa)
+        pb.keyframe_insert("rotation_quaternion", frame=frame)
+    hips = pbs[B["Hips"]]
+    delta = UP * d["hips_up"] * LEG + F * d["hips_fwd"] * LEG
+    m = bones[B["Hips"]].matrix_local.to_3x3().normalized()
+    hips.location = m.inverted() @ delta
+    hips.keyframe_insert("location", frame=frame)
+
+
+last = frames if motion == "jump" else frames - 1
+for f in range(0, last + 1):
+    apply(pose(f / FPS), f)
+
+bpy.ops.file.pack_all()
+bpy.ops.export_scene.gltf(filepath=dst_glb, export_format="GLB", export_skins=True, export_animations=True, export_yup=True, export_force_sampling=True)
+bpy.ops.export_scene.fbx(filepath=dst_fbx, bake_anim=True, add_leaf_bones=False, path_mode="COPY", embed_textures=True)
+print("TRAMA_ANIM", motion, frames, round(total, 2))
+'''
 
 
 class TramaLoadMesh:
@@ -849,6 +1086,59 @@ class TramaRiggedToGlb:
 
 
 # ---- Imagem para 3D: objeto escuro ------------------------------------------
+class TramaAnimate3D:
+    """Anima um modelo 3D com esqueleto humanoide (template mixamo do UniRig).
+
+    Não usa arquivos de animação de fora: monta o movimento direto nos ossos, quadro a
+    quadro, no Blender do ambiente do UniRig. Acha para onde o personagem olha pelos
+    ossos do pé, baixa os braços da T-pose e gera andar, correr e parado (em loop) ou
+    pular. Salva GLB (o card, que toca a animação) e FBX (Exportar).
+    """
+
+    MOTIONS = ["walk", "run", "jump", "idle"]
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("STRING", {"default": "3d/modelo_com_esqueleto.glb",
+                                     "tooltip": "GLB com esqueleto (saída do workflow de esqueleto), dentro da pasta input."}),
+                "motion": (cls.MOTIONS, {"default": "walk", "tooltip": "walk = andar, run = correr, jump = pular, idle = parado respirando."}),
+                "seconds": ("FLOAT", {"default": 2.0, "min": 0.5, "max": 20.0, "step": 0.5,
+                                      "tooltip": "Duração do loop (andar, correr, parado); arredonda para ciclos inteiros. O pulo dura 1,55 s."}),
+                "filename_prefix": ("STRING", {"default": "trama/trama_3d_animado"}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("glb_path",)
+    FUNCTION = "animate"
+    OUTPUT_NODE = True
+    CATEGORY = "Trama"
+
+    def animate(self, model, motion, seconds, filename_prefix):
+        import os
+        import folder_paths
+
+        root = folder_paths.get_input_directory()
+        src = os.path.abspath(os.path.join(root, model))
+        if not os.path.exists(src):
+            raise RuntimeError(f"Modelo não encontrado: {model}")
+        out_dir = folder_paths.get_output_directory()
+        full_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(filename_prefix, out_dir)
+        os.makedirs(full_folder, exist_ok=True)
+        stem = f"{filename}_{counter:05}_"
+        glb = os.path.join(full_folder, stem + ".glb")
+        fbx = os.path.join(full_folder, stem + ".fbx")
+        out = _run_blender(_ANIMATE_SCRIPT, [src, glb, fbx, motion, str(seconds)])
+        if not os.path.exists(glb):
+            raise RuntimeError(f"O Blender não gerou a animação: {out[-800:]}")
+        info = next((l for l in out.splitlines() if l.startswith("TRAMA_ANIM")), "")
+        print(f"[Trama] animação: {glb} ({info})")
+        files = [{"filename": os.path.basename(glb), "subfolder": subfolder, "type": "output"}]
+        return {"ui": {"3d": files, "text": [info]}, "result": (os.path.relpath(glb, out_dir),)}
+
+
 class TramaImageStyle:
     """Diz se a imagem é um desenho chapado em preto e branco (traço, cartum sem sombra).
 
@@ -982,5 +1272,5 @@ class TramaLimitMetallic:
         return (metallic.clamp(max=float(limit)),)
 
 
-NODE_CLASS_MAPPINGS = {"TramaMatchVolume": TramaMatchVolume, "TramaAnalyzeAudio": TramaAnalyzeAudio, "TramaMixAudio": TramaMixAudio, "TramaAudioWindow": TramaAudioWindow, "TramaAceRepaint": TramaAceRepaint, "TramaRepaintSplice": TramaRepaintSplice, "TramaTranscribeAudio": TramaTranscribeAudio, "TramaLoadMesh": TramaLoadMesh, "TramaRiggedToGlb": TramaRiggedToGlb, "TramaContrastBackground": TramaContrastBackground, "TramaLimitMetallic": TramaLimitMetallic, "TramaImageStyle": TramaImageStyle}
-NODE_DISPLAY_NAME_MAPPINGS = {"TramaMatchVolume": "Igualar volume (Trama)", "TramaAnalyzeAudio": "Analisar áudio (Trama)", "TramaMixAudio": "Juntar áudios (Trama)", "TramaAudioWindow": "Trecho para regerar (Trama)", "TramaAceRepaint": "Repaint do ACE-Step 1.5 (Trama)", "TramaRepaintSplice": "Colar trecho na música (Trama)", "TramaTranscribeAudio": "Transcrever voz (Trama)", "TramaLoadMesh": "Carregar modelo 3D (Trama)", "TramaRiggedToGlb": "Esqueleto: FBX para GLB (Trama)", "TramaContrastBackground": "Fundo com contraste para 3D (Trama)", "TramaLimitMetallic": "Limitar metal (Trama)", "TramaImageStyle": "Desenho chapado? (Trama)"}
+NODE_CLASS_MAPPINGS = {"TramaMatchVolume": TramaMatchVolume, "TramaAnalyzeAudio": TramaAnalyzeAudio, "TramaMixAudio": TramaMixAudio, "TramaAudioWindow": TramaAudioWindow, "TramaAceRepaint": TramaAceRepaint, "TramaRepaintSplice": TramaRepaintSplice, "TramaTranscribeAudio": TramaTranscribeAudio, "TramaLoadMesh": TramaLoadMesh, "TramaRiggedToGlb": TramaRiggedToGlb, "TramaContrastBackground": TramaContrastBackground, "TramaLimitMetallic": TramaLimitMetallic, "TramaImageStyle": TramaImageStyle, "TramaAnimate3D": TramaAnimate3D}
+NODE_DISPLAY_NAME_MAPPINGS = {"TramaMatchVolume": "Igualar volume (Trama)", "TramaAnalyzeAudio": "Analisar áudio (Trama)", "TramaMixAudio": "Juntar áudios (Trama)", "TramaAudioWindow": "Trecho para regerar (Trama)", "TramaAceRepaint": "Repaint do ACE-Step 1.5 (Trama)", "TramaRepaintSplice": "Colar trecho na música (Trama)", "TramaTranscribeAudio": "Transcrever voz (Trama)", "TramaLoadMesh": "Carregar modelo 3D (Trama)", "TramaRiggedToGlb": "Esqueleto: FBX para GLB (Trama)", "TramaContrastBackground": "Fundo com contraste para 3D (Trama)", "TramaLimitMetallic": "Limitar metal (Trama)", "TramaImageStyle": "Desenho chapado? (Trama)", "TramaAnimate3D": "Animar modelo 3D (Trama)"}

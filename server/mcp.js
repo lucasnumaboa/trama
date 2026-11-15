@@ -23,7 +23,7 @@ const DEFAULT_WAIT = 240; // s; clientes como o Codex cortam a chamada em 60 s s
 const MAX_WAIT = 3600;
 const INLINE_IMAGE_MAX = 4 * 1024 * 1024;
 
-export const INSTRUCTIONS = `Trama é um estúdio criativo local que roda os workflows do ComfyUI do usuário (GPU local). Use para criar os assets do que você estiver construindo: concept art, sprites, texturas, ícones, personagens consistentes, música, efeitos e vozes, vídeo, modelos 3D (com esqueleto para animar).
+export const INSTRUCTIONS = `Trama é um estúdio criativo local que roda os workflows do ComfyUI do usuário (GPU local). Use para criar os assets do que você estiver construindo: concept art, sprites, texturas, ícones, personagens consistentes, música, efeitos e vozes, vídeo, modelos 3D com esqueleto e animações (andar, correr, pular, parado) prontos para jogo.
 
 Como usar:
 1. create_project (um projeto por trabalho; tudo aparece no canvas do Trama, que o usuário acompanha ao vivo) ou list_projects para continuar um.
