@@ -7,6 +7,7 @@ import { readImage, readVideo, readPeople, findPerson, describeCharacter, vision
 import { reviewGeneration } from './review.js';
 import { getSettings } from './settings.js';
 import { meshStats } from './model3d.js';
+import { analyzeAudio, suggestPitchShift } from './audio.js';
 import { listCapabilities } from './capabilities.js';
 import { swapVideo, planChunks, matchPerson, DEFAULT_CHUNK, MAX_CHUNK, SWAP_WORKFLOW } from './swap.js';
 import { castOf, findCharacter, upsertCharacter, removeCharacter, mentionedCharacters, placeCharacters } from './cast.js';
@@ -139,6 +140,21 @@ Nas operações de um arquivo só, o resultado vira uma NOVA VERSÃO do mesmo ca
     description:
       'Olha uma imagem ou um vídeo do projeto com um modelo de visão e devolve o que tem nela: cada pessoa (posição, idade, cabelo, roupa, o que faz, papel provável), o lugar, a luz e o enquadramento. A descrição fica guardada no card. As imagens anexadas pelo usuário já chegam descritas na mensagem: não chame look_at nelas (cada leitura leva 1 a 2 minutos de GPU). Use em imagens e vídeos gerados, para conferir se saíram como pedido (no vídeo ele olha três quadros: início, meio e fim, e lista defeitos como rosto que muda), ou com refresh quando o card ganhou nova versão.',
     parameters: { type: 'object', properties: { asset_id: { type: 'string' }, refresh: { type: 'boolean', description: 'true para olhar de novo (ex.: a imagem ganhou nova versão)' } }, required: ['asset_id'] },
+  },
+  {
+    name: 'analyze_audio',
+    description:
+      'Escuta um áudio (ou o som de um vídeo) e mede: duração, volume, se é só voz ou tem música junto, o tom da voz (Hz, nota e região grave/médio/agudo), se parece canto ou fala. Separa a voz do instrumental antes de medir. Use em vez de perguntar ao usuário coisas técnicas sobre o áudio (tom, se a voz está limpa, se é canto). Com compare_with (outro card de áudio), compara as duas vozes e diz o pitch_shift certo para a troca de voz cantada (0, -12 ou +12). Leva de 10 s a 1 min por áudio.',
+    parameters: {
+      type: 'object',
+      properties: {
+        asset_id: { type: 'string', description: 'Card de áudio ou vídeo' },
+        compare_with: { type: 'string', description: 'Outro card de áudio (ex.: a voz de referência) para comparar o tom das vozes' },
+        separate: { type: 'boolean', description: 'Separar voz e instrumental antes de medir (padrão true)' },
+        refresh: { type: 'boolean' },
+      },
+      required: ['asset_id'],
+    },
   },
   {
     name: 'video_people',
@@ -984,6 +1000,32 @@ export async function runTool(name, args, ctx) {
       updateAsset(p, a.id, { vision: r.vision, visionVersion: VISION_VERSION, characterSheet: r.character || undefined });
       saveProject(p);
       return { label: `Olhou "${a.title}"`, result: { asset_id: a.id, title: a.title, description: a.vision } };
+    }
+
+    case 'analyze_audio': {
+      const measure = async (id) => {
+        const a = findAsset(p, id);
+        if (!a.file || (a.kind !== 'audio' && a.kind !== 'video')) throw new Error(`analyze_audio mede áudios e o som de vídeos; "${a.title}" não é nenhum dos dois.`);
+        if (a.status === 'generating') throw new Error(`"${a.title}" ainda está gerando.`);
+        const separate = args.separate !== false;
+        // Medida guardada no card, por versão do arquivo e modo (com ou sem separação).
+        const key = `${a.file.subfolder || ''}/${a.file.filename}|${separate}`;
+        if (a.audioInfo?.key === key && !args.refresh) return { a, report: a.audioInfo.report, cached: true };
+        ctx.step({ label: `Ouvindo "${a.title}"`, assetIds: [a.id] });
+        const report = await analyzeAudio(a, { separate, signal: ctx.signal });
+        updateAsset(p, a.id, { audioInfo: { key, report } }, { persist: true });
+        return { a, report };
+      };
+      const first = await measure(args.asset_id);
+      const result = { asset_id: first.a.id, title: first.a.title, ...first.report };
+      let label = `Ouviu "${first.a.title}"`;
+      if (args.compare_with) {
+        const second = await measure(args.compare_with);
+        result.compare = { asset_id: second.a.id, title: second.a.title, ...second.report };
+        result.pitch = suggestPitchShift(first.report.median_hz, second.report.median_hz);
+        label = `Ouviu "${first.a.title}" e "${second.a.title}"`;
+      }
+      return { label, assetIds: [args.asset_id, ...(args.compare_with ? [args.compare_with] : [])], result };
     }
 
     case 'video_people': {

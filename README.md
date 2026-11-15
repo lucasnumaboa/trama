@@ -46,7 +46,8 @@ Everything runs locally: the agent talks to an LLM (DeepSeek, OpenAI-compatible 
 - **3D models from an image**: send a picture of an object or character (or ask the agent to draw one first) and get a textured 3D model (GLB) on the canvas, turning by itself. Open it to orbit and zoom. TRELLIS.2 and Pixal3D run locally from the official ComfyUI template; on an RTX 3090 a model takes about 10 minutes.
 - **Point at what to fix on a 3D model**: in the open model, click **Apontar correção**, click the spot ("the hat brim is bent") and send. Trama captures that view with the spot circled in red and hands it to the agent, which fixes the source image with an image editor and rebuilds the model as a new version of the same card. These models have no text prompt, so the image is what steers them.
 - **Export 3D**: GLB with texture (Blender, game engines, web), STL for 3D printing (rotated to Z-up, standing on the bed, centered and scaled to the height you choose in mm) and OBJ (mesh only). The conversion runs in Trama itself, with no extra software.
-- **Swap the singing voice of a song**: send a finished song and a short clip of another voice. Mel-Band RoFormer splits vocals from the instrumental, Seed-VC re-sings the vocals in the new voice (singing mode keeps the melody), and the two are mixed back at the original length. Shift by a whole octave (±12) when the voices are far apart, so the vocals stay in tune with the instrumental. A 30 s excerpt takes under a minute on an RTX 3090. Needs the [ComfyUI-MelBandRoFormer](https://github.com/kijai/ComfyUI-MelBandRoFormer) node and the Seed-VC models.
+- **Swap the singing voice of a song**: send a finished song and a short clip of another voice. Mel-Band RoFormer splits vocals from the instrumental, Seed-VC re-sings the vocals in the new voice (singing mode keeps the melody), the new vocals are leveled to the original vocals and mixed back at the original length with a soft limiter, so the song keeps its loudness. When the voices are far apart the agent shifts a whole octave (±12) so the vocals stay in tune. The full 3:39 "Me Encontra" takes about 2 minutes on an RTX 3090.
+- **The agent listens to audio** (`analyze_audio`): duration, loudness, voice only or voice with music, the voice's pitch (Hz, note, low/mid/high) and whether it is sung or spoken. It measures instead of asking you technical questions, and compares two voices to pick the octave for a voice swap.
 - **Recipes**: every card remembers the workflow, values and inputs that made it, so the agent can redo only what changed.
 - **Review of every generation** (Settings → "Conferir cada imagem e vídeo gerado", on by default): the local vision model describes the image or video that came out and DeepSeek compares it with what was asked. Serious problems (a character drawn twice or missing, extra people, vertical instead of horizontal, deformed faces) make the agent redo it, at most twice; small differences (pose, props, text) are only mentioned. It takes about 1 to 2 minutes per generation.
 - **Automatic checks** after every generation and edit: real duration, resolution, file size, where the sound starts/ends, uniform borders, dominant color. Problems show up as warnings the agent must handle.
@@ -130,6 +131,10 @@ Then check that every model in the list is usable on your machine:
 node tools/test_workflows.mjs --validate   # ComfyUI accepts every workflow (nothing is generated)
 node tools/test_workflows.mjs              # also runs the fast ones for real
 ```
+
+### Trama's own ComfyUI nodes
+
+Copy `comfy-nodes/ComfyUI-Trama` into `ComfyUI/custom_nodes` and restart ComfyUI. It adds **Igualar volume**, **Juntar áudios** (used by `trama_trocar_voz_musica`) and **Analisar áudio** (used by `analyze_audio`). It is plain Python with no extra packages (librosa ships with ComfyUI portable).
 
 ### Building the installer
 
