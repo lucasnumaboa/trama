@@ -17,3 +17,10 @@ test('o pedido de conversão mantém as cores e o branco', () => {
   assert.match(TOON_PROMPT, /same colors/);
   assert.match(TOON_PROMPT, /white or light area stays white/);
 });
+
+test('nome de workflow sem .json ganha a extensão', async () => {
+  const { workflowFile } = await import('./comfy.js');
+  assert.equal(workflowFile('trama_3d_animar'), 'trama_3d_animar.json');
+  assert.equal(workflowFile('trama_3d_rig.json'), 'trama_3d_rig.json');
+  assert.equal(workflowFile('xjson'), 'xjson.json');
+});

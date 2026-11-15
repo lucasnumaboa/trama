@@ -73,3 +73,24 @@ test('modelo local: conversa num texto só e resposta em JSON com chamadas', () 
   assert.equal(JSON.parse(r.tool_calls[0].function.arguments).asset_id, 'asset_9');
   assert.deepEqual(parseLocalReply('Oi! Tudo bem?'), { role: 'assistant', content: 'Oi! Tudo bem?' });
 });
+
+test('modelo local: só a primeira resposta JSON vale (o resto é ele inventando a próxima)', async () => {
+  const { parseLocalReply } = await import('./llm.js');
+  const text = '{"say": "", "calls": [{"name": "run_workflow", "arguments": {"name": "trama_3d_animar.json", "values": {"1.motion": "run"}}}]}\n\n{"say": "O ratinho está correndo.", "calls": []}';
+  const r = parseLocalReply(text, 1);
+  assert.equal(r.tool_calls.length, 1);
+  assert.equal(r.tool_calls[0].function.name, 'run_workflow');
+  assert.match(r.tool_calls[0].function.arguments, /trama_3d_animar/);
+  const plain = parseLocalReply('{"say": "texto com } chave", "calls": []} sobra');
+  assert.equal(plain.content, 'texto com } chave');
+});
+
+test('modelo local: conserta o "}" esquecido antes do "]" na chamada', async () => {
+  const { parseLocalReply } = await import('./llm.js');
+  const text = '{"say": "", "calls": [{"name": "run_workflow", "arguments": {"name": "trama_3d_animar.json", "title": "Ratinho correndo", "values": {"1.motion": "run"}, "inputs": {"media:1": "asset_ba8f121b"}}]}\n\n{"say": "pronto", "calls": []}';
+  const r = parseLocalReply(text, 2);
+  assert.equal(r.tool_calls?.length, 1);
+  const args = JSON.parse(r.tool_calls[0].function.arguments);
+  assert.equal(args.inputs['media:1'], 'asset_ba8f121b');
+  assert.equal(args.values['1.motion'], 'run');
+});

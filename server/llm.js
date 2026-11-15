@@ -235,13 +235,55 @@ Use "calls": [] quando não precisar de ferramenta. Depois de cada ferramenta vo
 }
 
 /** Lê a resposta do modelo local: JSON {say, calls} ou, se não for JSON, texto puro. */
+/**
+ * Primeiro objeto JSON completo do texto. Modelos pequenos às vezes escrevem a chamada e
+ * depois inventam a própria próxima resposta ({"say": ...}{"say": "pronto"}): só a
+ * primeira vale (antes o texto inteiro falhava no parse e a chamada não rodava).
+ */
+export function firstJsonObject(raw) {
+  const start = raw.indexOf('{');
+  if (start < 0) return null;
+  // Lê do primeiro "{" até fechar, consertando colchetes trocados: o Qwen3-VL 8B escreve
+  // [{"name": ..., "arguments": {...}]} esquecendo o "}" da chamada antes do "]".
+  const CLOSE = { '{': '}', '[': ']' };
+  const stack = [];
+  let out = '';
+  let inString = false;
+  for (let i = start; i < raw.length; i++) {
+    const ch = raw[i];
+    if (inString) {
+      out += ch;
+      if (ch === '\\' && i + 1 < raw.length) out += raw[++i];
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{' || ch === '[') stack.push(ch);
+    else if (ch === '}' || ch === ']') {
+      // Fecha o que ficou aberto até achar o par certo.
+      while (stack.length && CLOSE[stack[stack.length - 1]] !== ch) out += CLOSE[stack.pop()];
+      if (!stack.length) break;
+      stack.pop();
+      out += ch;
+      if (!stack.length) break;
+      continue;
+    }
+    out += ch;
+  }
+  while (stack.length) out += CLOSE[stack.pop()];
+  try {
+    return JSON.parse(out);
+  } catch {
+    return null;
+  }
+}
+
 export function parseLocalReply(text, step = 0) {
   const raw = String(text || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-  const start = raw.indexOf('{');
-  const end = raw.lastIndexOf('}');
-  if (start >= 0 && end > start) {
+  const found = firstJsonObject(raw);
+  if (found && typeof found === 'object') {
     try {
-      const j = JSON.parse(raw.slice(start, end + 1));
+      const j = found;
       const calls = (Array.isArray(j.calls) ? j.calls : [])
         .filter((c) => c && typeof c.name === 'string')
         .map((c, i) => ({ id: `local_${Date.now().toString(36)}_${step}_${i}`, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.arguments || {}) } }));

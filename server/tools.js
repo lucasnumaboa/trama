@@ -679,6 +679,10 @@ async function generate(ctx, { name, values = {}, inputs = {}, characters = [], 
       }
     });
     saveProject(p);
+    // Depois do esqueleto o agente costumava dizer que não sabe animar: o resultado já diz como.
+    if (/3d_rig/.test(d.name)) {
+      notices.push(`Este modelo com esqueleto já pode ser animado aqui mesmo: run_workflow com o workflow trama_3d_animar.json, inputs {"media:1": "${created[0].id}"} e values {"1.motion": "walk" | "run" | "jump" | "idle", "1.seconds": 2}. Um card por movimento. Não ofereça vídeo nem mande o usuário ao Mixamo para isso.`);
+    }
     const counts = {};
     created.forEach((a) => (counts[a.kind] = (counts[a.kind] || 0) + 1));
     const what = Object.entries(counts).map(([k, n]) => plural(n, k)).join(' e ');

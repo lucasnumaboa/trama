@@ -4,6 +4,7 @@ import * as comfy from './comfy.js';
 import { describeWorkflow } from './describe.js';
 
 export async function describeByName(name, { refresh = false } = {}) {
+  name = comfy.workflowFile(name);
   const info = await comfy.objectInfo({ refresh });
   return describeWorkflow(name, await comfy.loadWorkflow(name), info);
 }

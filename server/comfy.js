@@ -57,7 +57,12 @@ export async function listWorkflows() {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export const loadWorkflow = (name) => getJson(`/api/userdata/${encodeURIComponent(`workflows/${name}`)}`);
+/** Nome do arquivo do workflow: aceita sem ".json" (os modelos às vezes cortam a extensão). */
+export const workflowFile = (name) => {
+  const s = String(name || '').trim();
+  return /\.json$/i.test(s) ? s : `${s}.json`;
+};
+export const loadWorkflow = (name) => getJson(`/api/userdata/${encodeURIComponent(`workflows/${workflowFile(name)}`)}`);
 
 /** Envia um arquivo para a pasta input do ComfyUI. Devolve o nome a usar nos nós Load*. */
 export async function uploadInput(buffer, filename, { overwrite = true, subfolder = '' } = {}) {
