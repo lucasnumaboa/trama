@@ -49,7 +49,8 @@ const BUILTIN = [
   ['music_create', 'trama_musica_com_voz_ace_step.json', 'ACE-Step 1.5 XL Turbo (com voz, melhor qualidade)'],
   ['music_create', 'trama_musica_ace_step_aio.json', 'ACE-Step 1.5 Turbo AIO (com voz, mais leve)'],
   ['music_create', 'stable_audio3_otimizado_3090.json', 'Stable Audio 3 (instrumental e efeitos)'],
-  ['voice_edit', 'trama_trocar_voz.json', 'Seed-VC (trocar voz)'],
+  ['voice_edit', 'trama_trocar_voz.json', 'Seed-VC (trocar voz: fala ou voz já isolada)'],
+  ['voice_edit', 'trama_trocar_voz_musica.json', 'Seed-VC + separação (trocar a voz cantada de uma música completa)'],
   ['model3d_create', 'trama_3d_trellis2.json', 'TRELLIS.2 (imagem → modelo 3D, mais nítido)'],
   ['model3d_create', 'trama_3d_pixal3d.json', 'Pixal3D (segue o ângulo da foto; textura menos nítida)'],
 ];
