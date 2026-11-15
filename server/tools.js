@@ -2,7 +2,9 @@
 // (vai para o modelo) e um rótulo curto (vai para o chat).
 import * as comfy from './comfy.js';
 import { describeByName, runWorkflow } from './exec.js';
-import { editMedia, mediaInfo, OPERATIONS, SINGLE_INPUT_OPS, NoChange } from './media.js';
+import { editMedia, mediaInfo, publish, OPERATIONS, SINGLE_INPUT_OPS, NoChange } from './media.js';
+import { probe, downloadMedia } from './download.js';
+import fs from 'node:fs';
 import { readImage, readVideo, readPeople, findPerson, describeCharacter, visionIsFresh, VISION_VERSION } from './vision.js';
 import { reviewGeneration } from './review.js';
 import { getSettings } from './settings.js';
@@ -142,6 +144,22 @@ Nas operações de um arquivo só, o resultado vira uma NOVA VERSÃO do mesmo ca
     parameters: { type: 'object', properties: { asset_id: { type: 'string' }, refresh: { type: 'boolean', description: 'true para olhar de novo (ex.: a imagem ganhou nova versão)' } }, required: ['asset_id'] },
   },
   {
+    name: 'import_link',
+    description:
+      'Lê ou baixa um link de vídeo (YouTube, Instagram, TikTok, Vimeo e outros sites). what "info": só as informações (título, canal, duração, descrição, capítulos, música/artista quando o site informa), sem baixar; use para saber o que é o link. what "video": baixa o vídeo com som e cria um card de vídeo (para trocar personagem, criar igual, continuar, extrair quadros). what "audio": baixa só o som e cria um card de áudio (para trocar voz, cortar, usar de trilha). start/end (segundos) baixam só um trecho, o que é bem mais rápido em vídeos longos. Use com vídeos do usuário ou que ele tem direito de usar.',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'O link completo (https://...)' },
+        what: { type: 'string', enum: ['info', 'video', 'audio'], description: 'info (só ler), video ou audio' },
+        start: { type: 'number', description: 'Início do trecho em segundos (opcional)' },
+        end: { type: 'number', description: 'Fim do trecho em segundos (opcional)' },
+        title: { type: 'string', description: 'Título do card (padrão: o título do vídeo)' },
+      },
+      required: ['url', 'what'],
+    },
+  },
+  {
     name: 'analyze_audio',
     description:
       'Escuta um áudio (ou o som de um vídeo) e mede: duração, volume, se é só voz ou tem música junto, o tom da voz (Hz, nota e região grave/médio/agudo), se parece canto ou fala. Separa a voz do instrumental antes de medir. Use em vez de perguntar ao usuário coisas técnicas sobre o áudio (tom, se a voz está limpa, se é canto). Com compare_with (outro card de áudio), compara as duas vozes e diz o pitch_shift certo para a troca de voz cantada (0, -12 ou +12). Leva de 10 s a 1 min por áudio.',
@@ -151,6 +169,8 @@ Nas operações de um arquivo só, o resultado vira uma NOVA VERSÃO do mesmo ca
         asset_id: { type: 'string', description: 'Card de áudio ou vídeo' },
         compare_with: { type: 'string', description: 'Outro card de áudio (ex.: a voz de referência) para comparar o tom das vozes' },
         separate: { type: 'boolean', description: 'Separar voz e instrumental antes de medir (padrão true)' },
+        lyrics: { type: 'boolean', description: 'Transcrever a voz com o início e o fim de cada frase (transcript.segments). Use para achar onde uma frase é cantada antes de trocar um trecho da letra.' },
+        language: { type: 'string', enum: ['auto', 'portuguese', 'english', 'spanish', 'japanese', 'french', 'italian', 'german', 'korean', 'chinese'], description: 'Idioma da letra (ajuda a transcrição)' },
         refresh: { type: 'boolean' },
       },
       required: ['asset_id'],
@@ -1002,6 +1022,57 @@ export async function runTool(name, args, ctx) {
       return { label: `Olhou "${a.title}"`, result: { asset_id: a.id, title: a.title, description: a.vision } };
     }
 
+    case 'import_link': {
+      const what = ['info', 'video', 'audio'].includes(args.what) ? args.what : 'info';
+      ctx.step({ label: what === 'info' ? 'Lendo o link' : `Lendo o link para baixar o ${what === 'audio' ? 'áudio' : 'vídeo'}` });
+      const info = await probe(args.url, { signal: ctx.signal });
+      if (what === 'info') return { label: `Leu o link "${clip(info.title || info.url, 60)}"`, result: info };
+      if (info.is_live) throw new Error('Esse link é uma transmissão ao vivo; não dá para baixar enquanto está no ar.');
+      const start = Number.isFinite(args.start) ? Math.max(0, args.start) : undefined;
+      const end = Number.isFinite(args.end) ? args.end : undefined;
+      if (start !== undefined && end !== undefined && end <= start) throw new Error('O fim do trecho precisa vir depois do início.');
+      const part = start !== undefined || end !== undefined ? ` (${start ?? 0}–${end ?? 'fim'} s)` : '';
+      const kind = what === 'audio' ? 'audio' : 'video';
+      const target = addAsset(p, { kind, title: clip(args.title || info.title || 'Vídeo do link', 80), status: 'generating', progress: 0, detail: 'Baixando', source: { url: info.url, title: info.title, channel: info.channel, start, end } }, []);
+      saveProject(p);
+      ctx.step({ label: `Baixando ${kind === 'audio' ? 'o áudio' : 'o vídeo'} "${clip(info.title, 50)}"${part}`, assetIds: [target.id] });
+      let last = 0;
+      let dl;
+      try {
+        dl = await downloadMedia(info.url, {
+          what,
+          start,
+          end,
+          signal: ctx.signal,
+          onProgress: (progress) => {
+            if (Date.now() - last < 400) return;
+            last = Date.now();
+            updateAsset(p, target.id, { progress, detail: `Baixando ${Math.round(progress * 100)}%` });
+          },
+        });
+        updateAsset(p, target.id, { detail: 'Enviando ao ComfyUI' });
+        const file = await publish(dl.file);
+        const v = { file: { filename: file.filename, subfolder: file.subfolder, type: file.type }, kind: file.kind === 'file' ? kind : file.kind, note: 'baixado do link' };
+        updateAsset(p, target.id, { status: 'ready', progress: 1, detail: '', kind: v.kind });
+        addVersion(p, target.id, { ...v, note: 'original' });
+        saveProject(p);
+        const warnings = [];
+        if (part && !dl.cut) warnings.push('sem ffmpeg o trecho não foi cortado: veio o vídeo inteiro. Corte com edit_media trim.');
+        const { checks } = await inspectAll([findAsset(p, target.id)]);
+        return {
+          label: `Baixou ${kind === 'audio' ? 'o áudio' : 'o vídeo'} "${clip(info.title, 50)}"${part}`,
+          assetIds: [target.id],
+          warnings,
+          result: { ok: true, created: [describeAsset(findAsset(p, target.id))], info, checks, warnings },
+        };
+      } catch (error) {
+        updateAsset(p, target.id, { status: 'error', error: error.message, detail: '' }, { persist: true });
+        throw error;
+      } finally {
+        if (dl?.dir) fs.rmSync(dl.dir, { recursive: true, force: true });
+      }
+    }
+
     case 'analyze_audio': {
       const measure = async (id) => {
         const a = findAsset(p, id);
@@ -1009,10 +1080,10 @@ export async function runTool(name, args, ctx) {
         if (a.status === 'generating') throw new Error(`"${a.title}" ainda está gerando.`);
         const separate = args.separate !== false;
         // Medida guardada no card, por versão do arquivo e modo (com ou sem separação).
-        const key = `${a.file.subfolder || ''}/${a.file.filename}|${separate}`;
+        const key = `${a.file.subfolder || ''}/${a.file.filename}|${separate}|${args.lyrics ? args.language || 'auto' : ''}`;
         if (a.audioInfo?.key === key && !args.refresh) return { a, report: a.audioInfo.report, cached: true };
         ctx.step({ label: `Ouvindo "${a.title}"`, assetIds: [a.id] });
-        const report = await analyzeAudio(a, { separate, signal: ctx.signal });
+        const report = await analyzeAudio(a, { separate, lyrics: Boolean(args.lyrics), language: args.language || 'auto', signal: ctx.signal });
         updateAsset(p, a.id, { audioInfo: { key, report } }, { persist: true });
         return { a, report };
       };

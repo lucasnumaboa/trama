@@ -74,6 +74,10 @@ Regras:
 
 Modelos padrão por categoria (definidos pelo usuário nas Configurações). Quando o pedido couber numa categoria, use o modelo padrão dela. Se o padrão não aceita as entradas do pedido (ex.: o padrão é texto → vídeo e o usuário quer animar uma imagem), use a opção da mesma categoria que aceita essas entradas, preferindo a mesma família de modelo. Use outro modelo pelo nome quando o usuário pedir. Para trocar a voz de um áudio, use a categoria Edição de voz.
 
+Links (regra forte): quando a mensagem tiver um link de vídeo (YouTube, Instagram, TikTok etc.), use import_link. Se não estiver claro o que é ou o que ele quer, leia primeiro com what "info" (título, canal, duração, capítulos, música) e use isso para entender o pedido; não pergunte o que o link já responde. Baixe só o que o pedido precisa: what "video" para trocar personagem, criar algo igual, continuar ou tirar quadros; what "audio" para trocar voz, usar a música ou cortar o som. Em vídeos longos, baixe só o trecho necessário com start/end (ex.: a cena que ele citou, ou o bloco que o workflow aceita). Depois use o card baixado como qualquer outro (video_people, swap_character, look_at, analyze_audio...). Se o link for de outra pessoa e o pedido for para republicar o conteúdo como se fosse dele, avise em uma frase que precisa ter direito de uso.
+
+Trocar um trecho da letra (ex.: "troca 'me encontra, ou deixa eu te encontrar' por 'me chama, ou deixa eu te chamar'"): use trama_editar_trecho_musica, que regera só aquele trecho de tempo e deixa o resto igual. Antes, descubra onde a frase é cantada e a letra inteira: se a música foi feita pelo Trama, a letra, o estilo (tags) e o BPM estão na receita do card; senão, rode analyze_audio(lyrics: true, language do idioma) e use transcript.segments (início e fim de cada frase), tempo_bpm (confira tempo_bpm_alt: detectores erram pela metade) e key. Preencha: start_seconds/end_seconds do trecho com folga de 0,3 s antes e depois; lyrics = a letra INTEIRA com a frase trocada (com [verse]/[chorus]); tags = o estilo da música original (gênero, instrumentos, tipo de voz); bpm, keyscale e language da original. Prefira frases novas com o mesmo número de sílabas. Avise que o trecho é cantado pela voz do ACE-Step: em música de outra pessoa a voz muda ali; para devolver a voz original, separe a voz do trecho e use trama_trocar_voz com um pedaço da voz original. Se ficar diferente demais da melodia, refaça com strength menor (0,7); se a letra nova não pegar, strength 1,0 ou outra seed.
+
 Áudio (regra forte): não pergunte ao usuário coisas técnicas que dá para medir (tom da voz, se a referência é só voz ou tem música, se é canto ou fala, duração, volume). Meça com analyze_audio e decida. Pergunte só gosto (ex.: "quer a voz mais à frente?").
 
 Trocar a voz cantada (Edição de voz): se o usuário mandar uma música completa (instrumental + voz) e uma voz de referência, use trama_trocar_voz_musica (separa voz e instrumental, troca só a voz em modo canto e junta de volta na duração original). Para fala, ou voz já isolada (a cappella), use trama_trocar_voz. A voz de referência deve ter 5 a 30 s, de preferência só a voz; se ele mandar um áudio longo, corte um trecho limpo com edit_media trim antes. Antes de rodar, meça com analyze_audio(asset_id: música, compare_with: referência): confirma se a referência é só voz e devolve pitch.pitch_shift (0, -12 ou +12; outros valores desafinam com o instrumental). Use esse valor. Se a referência tiver música de fundo, avise e sugira um trecho só de voz. O volume da voz nova é igualado sozinho ao da voz original; se o usuário quiser a voz mais à frente ou mais atrás, refaça mudando o campo offset_db (padrão +1.5; ex.: +4 mais à frente, -2 mais atrás).
@@ -115,12 +119,14 @@ function failLabel(tool, args = {}) {
     define_character: 'Não consegui registrar o personagem',
     video_people: 'Não consegui ver quem está no vídeo',
     swap_character: 'Não consegui trocar o personagem',
+    import_link: args.what === 'info' ? 'Não consegui ler o link' : 'Não consegui baixar o link',
+    analyze_audio: 'Não consegui ouvir o áudio',
   };
   return names[tool] || `Falhou: ${tool.replace(/_/g, ' ')}`;
 }
 
 const REF =/@\{(asset_[0-9a-f]{8})\}/g;
-const KIND_NAME = { image: 'Imagem', video: 'Vídeo', audio: 'Áudio', text: 'Texto', file: 'Arquivo' };
+const KIND_NAME = { image: 'Imagem', video: 'Vídeo', audio: 'Áudio', text: 'Texto', model3d: 'Modelo 3D', file: 'Arquivo' };
 
 /** Texto para o modelo: referências viram "[Imagem 1 "título" (asset_x)]", numeradas por tipo. */
 function modelText(p, text, attachments) {

@@ -6,11 +6,12 @@ import * as comfy from './comfy.js';
 import { asComfyInput } from './exec.js';
 
 export const ANALYZE_NODE = 'TramaAnalyzeAudio';
+export const TRANSCRIBE_NODE = 'TramaTranscribeAudio';
 const SEPARATOR = ['MelBandRoFormerModelLoader', 'MelBandRoFormerSampler'];
 const SEPARATOR_MODEL = 'MelBandRoformer_fp16.safetensors';
 
 /** Monta o prompt de análise (com ou sem separação de voz). */
-export function analysisPrompt(input, { separate }) {
+export function analysisPrompt(input, { separate, lyrics = false, language = 'auto' }) {
   const prompt = { load: { class_type: 'LoadAudio', inputs: { audio: input }, _meta: { title: 'Áudio' } } };
   const inputs = { audio: ['load', 0] };
   if (separate) {
@@ -20,15 +21,21 @@ export function analysisPrompt(input, { separate }) {
     inputs.instruments = ['sep', 1];
   }
   prompt.analyze = { class_type: ANALYZE_NODE, inputs, _meta: { title: 'Medindo o áudio' } };
+  if (lyrics) {
+    prompt.transcribe = { class_type: TRANSCRIBE_NODE, inputs: { audio: inputs.vocals || ['load', 0], language }, _meta: { title: 'Transcrevendo a voz' } };
+  }
   return prompt;
 }
 
 /** Lê o relatório (JSON) que o nó devolve como texto. */
 export function parseReport(history) {
-  const out = comfy.collectOutputs(history).analyze || [];
-  const text = out.find((x) => x.kind === 'text')?.text;
+  const outputs = comfy.collectOutputs(history);
+  const text = (outputs.analyze || []).find((x) => x.kind === 'text')?.text;
   if (!text) throw new Error('o nó de análise não devolveu relatório');
-  return JSON.parse(text);
+  const report = JSON.parse(text);
+  const lyrics = (outputs.transcribe || []).find((x) => x.kind === 'text')?.text;
+  if (lyrics) report.transcript = JSON.parse(lyrics);
+  return report;
 }
 
 /** Frases curtas em português para o agente (e para o usuário, se ele perguntar). */
@@ -37,6 +44,8 @@ export function summarize(r) {
   if (r.has_music !== undefined) {
     lines.push(r.is_voice_only ? 'Só voz (sem música de fundo relevante).' : r.has_music ? `Tem música junto com a voz (voz ${r.vocals_minus_instruments_db} dB em relação ao instrumental).` : 'Voz com um pouco de som de fundo.');
   }
+  if (r.tempo_bpm) lines.push(`Andamento ~${r.tempo_bpm} BPM (ou ${r.tempo_bpm_alt}), tonalidade provável ${r.key}.`);
+  if (r.transcript?.segments?.length) lines.push(`Letra transcrita em ${r.transcript.segments.length} trechos com tempos (transcript.segments).`);
   if (r.median_hz) {
     lines.push(`Voz: tom mediano ${r.median_hz} Hz (${r.median_note}), região ${r.voice_register}, faixa de ${r.range_notes?.[0]} a ${r.range_notes?.[1]}${r.looks_like ? `, parece ${r.looks_like}` : ''}; ${r.voice_seconds} s com voz.`);
   } else if (r.voice_seconds === 0) {
@@ -49,11 +58,12 @@ export function summarize(r) {
  * Mede o áudio de um card (áudio ou vídeo).
  * @returns {Promise<object>} relatório + summary
  */
-export async function analyzeAudio(asset, { separate = true, signal } = {}) {
+export async function analyzeAudio(asset, { separate = true, lyrics = false, language = 'auto', signal } = {}) {
   const info = await comfy.objectInfo();
   if (!info[ANALYZE_NODE]) throw new Error('falta o custom node ComfyUI-Trama no ComfyUI (pasta comfy-nodes/ComfyUI-Trama do Trama): copie para ComfyUI/custom_nodes e reinicie o ComfyUI');
   const canSeparate = separate && SEPARATOR.every((n) => info[n]);
-  const history = await comfy.runPrompt(analysisPrompt(await asComfyInput(asset.file), { separate: canSeparate }), { signal });
+  if (lyrics && !info[TRANSCRIBE_NODE]) throw new Error('o ComfyUI-Trama instalado é antigo e não transcreve: copie a versão nova de comfy-nodes/ComfyUI-Trama e reinicie o ComfyUI');
+  const history = await comfy.runPrompt(analysisPrompt(await asComfyInput(asset.file), { separate: canSeparate, lyrics, language }), { signal });
   const report = parseReport(history);
   return { ...report, separated: canSeparate, summary: summarize(report) };
 }
