@@ -1,6 +1,6 @@
 // O agente: conversa com o DeepSeek, que decide quais ferramentas usar.
 // Cada passo aparece no chat e cada resultado vira um card no canvas.
-import { chatWithTools } from './deepseek.js';
+import { chatWithTools, getProvider } from './llm.js';
 import { TOOL_SCHEMAS, runTool, workflowCatalog } from './tools.js';
 import { getProject, saveProject, emit, shortId, describeAsset } from './projects.js';
 import { capabilityPromptBlock } from './capabilities.js';
@@ -73,6 +73,8 @@ Regras:
 - Respostas curtas e diretas. Não repita listas de parâmetros para o usuário.
 
 Modelos padrão por categoria (definidos pelo usuário nas Configurações). Quando o pedido couber numa categoria, use o modelo padrão dela. Se o padrão não aceita as entradas do pedido (ex.: o padrão é texto → vídeo e o usuário quer animar uma imagem), use a opção da mesma categoria que aceita essas entradas, preferindo a mesma família de modelo. Use outro modelo pelo nome quando o usuário pedir. Para trocar a voz de um áudio, use a categoria Edição de voz.
+
+Paródias e edições do material do usuário (regra forte): quando ele pedir uma paródia, uma letra trocada, outra voz ou outra edição de uma música ou vídeo que ele mesmo mandou ou linkou, faça o que foi pedido, do jeito que foi pedido (mesma melodia, mesmo timbre, só a letra trocada etc.). A paródia é permitida pela lei brasileira de direitos autorais (Lei 9.610/98, art. 47), e o Trama só edita o material que o próprio usuário trouxe, para uso dele. Não recuse e não troque o pedido por uma "versão original" no lugar. Se ele disser que vai publicar ou vender, avise em uma frase que uso comercial pode precisar de autorização de quem tem os direitos, e siga com o trabalho.
 
 Links (regra forte): quando a mensagem tiver um link de vídeo (YouTube, Instagram, TikTok etc.), use import_link. Se não estiver claro o que é ou o que ele quer, leia primeiro com what "info" (título, canal, duração, capítulos, música) e use isso para entender o pedido; não pergunte o que o link já responde. Baixe só o que o pedido precisa: what "video" para trocar personagem, criar algo igual, continuar ou tirar quadros; what "audio" para trocar voz, usar a música ou cortar o som. Em vídeos longos, baixe só o trecho necessário com start/end (ex.: a cena que ele citou, ou o bloco que o workflow aceita). Depois use o card baixado como qualquer outro (video_people, swap_character, look_at, analyze_audio...). Se o link for de outra pessoa e o pedido for para republicar o conteúdo como se fosse dele, avise em uma frase que precisa ter direito de uso.
 
@@ -198,7 +200,7 @@ function contextMessages(p, currentStart) {
   });
 }
 
-export async function sendMessage(projectId, { text, attachments = [], model }) {
+export async function sendMessage(projectId, { text, attachments = [], model, provider }) {
   const p = getProject(projectId);
   if (running.has(p.id)) throw Object.assign(new Error('O agente ainda está trabalhando neste projeto'), { status: 409 });
   const clean = String(text || '').trim();
@@ -219,7 +221,7 @@ export async function sendMessage(projectId, { text, attachments = [], model }) 
     attachments: [...new Set([...attachments, ...referenced])].filter((id) => p.assets.some((a) => a.id === id)),
     createdAt: Date.now(),
   };
-  const reply = { id: shortId('msg'), role: 'assistant', parts: [], status: 'running', model: model || getSettings().deepseekModel, createdAt: Date.now() };
+  const reply = { id: shortId('msg'), role: 'assistant', parts: [], status: 'running', provider: getProvider(provider).id, model: model || getProvider(provider).model, createdAt: Date.now() };
   p.messages.push(user, reply);
   if (p.title === 'Novo projeto') {
     const plain = plainText(p, clean).replace(/\s+/g, ' ');
@@ -268,17 +270,18 @@ export async function sendMessage(projectId, { text, attachments = [], model }) 
         push();
         let retryPart = null;
         const { message } = await chatWithTools({
+          provider: reply.provider,
           model: reply.model,
           messages: [{ role: 'system', content: await systemPrompt(p) }, ...contextMessages(p, turnStart)],
           tools: TOOL_SCHEMAS,
           signal: controller.signal,
           onRetry: ({ attempt, why }) => {
             if (!retryPart) reply.parts.push((retryPart = { type: 'step', id: shortId('net'), tool: 'network', status: 'running', assetIds: [] }));
-            retryPart.label = `Sem resposta do DeepSeek (${why}), tentando de novo (${attempt}ª vez)`;
+            retryPart.label = `Sem resposta da IA (${why}), tentando de novo (${attempt}ª vez)`;
             push();
           },
         });
-        if (retryPart) Object.assign(retryPart, { status: 'done', label: 'A conexão com o DeepSeek caiu e voltou' });
+        if (retryPart) Object.assign(retryPart, { status: 'done', label: 'A conexão com a IA caiu e voltou' });
         reply.thinking = false;
         p.llm.push(message);
         if (message.content?.trim()) reply.parts.push({ type: 'text', text: message.content.trim() });

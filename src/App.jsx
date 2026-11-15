@@ -33,8 +33,8 @@ export default function App() {
   const [modal, setModal] = useState(['settings', 'workflows'].includes(HASH.get('modal')) ? HASH.get('modal') : null);
   const [settings, setSettings] = useState(null);
   const [comfy, setComfy] = useState(null);
-  const [models, setModels] = useState([]);
-  const [model, setModel] = useState(localStorage.getItem('trama:model') || '');
+  // Qual provedor abrir nas Configurações (ao clicar num provedor sem chave).
+  const [settingsProvider, setSettingsProvider] = useState(null);
   const [toast, setToast] = useState('');
 
   const say = useCallback((msg) => {
@@ -57,9 +57,7 @@ export default function App() {
   useEffect(() => {
     api.settings().then((s) => {
       setSettings(s);
-      setModel((m) => m || s.deepseekModel);
-      if (s.deepseekKeySet) api.deepseekModels().then((r) => setModels(r.models)).catch(() => {});
-      else setModal('settings');
+      if (!s.providers?.[s.llmProvider]?.ready) setModal('settings');
     });
     api.comfyStatus().then(setComfy).catch(() => setComfy({ ok: false }));
     api.projects().then(async (r) => {
@@ -140,7 +138,7 @@ export default function App() {
   async function send(text) {
     try {
       setRunning(true);
-      await api.send(project.id, { text, attachments, model });
+      await api.send(project.id, { text, attachments, ...agentChoice() });
       setAttachments([]);
       setSelected([]);
     } catch (e) {
@@ -150,6 +148,16 @@ export default function App() {
   }
 
   const openAsset = useCallback((a) => setPreview(a), []);
+
+  // Provedor e modelo do agente que vão com a mensagem (o servidor usa os salvos se faltar).
+  const agentChoice = () => {
+    const id = settings?.llmProvider;
+    return id ? { provider: id, model: settings.providers?.[id]?.model } : {};
+  };
+  const openSettings = (provider) => {
+    setSettingsProvider(provider || null);
+    setModal('settings');
+  };
 
   // "Apontar correção" num modelo 3D: a foto da vista com o ponto marcado vira um card
   // ao lado do modelo e vai para o agente junto com o pedido.
@@ -164,7 +172,7 @@ export default function App() {
       await api.send(project.id, {
         text: `Corrija o modelo 3D "${asset.title}": ${text}. O ponto está marcado com um círculo vermelho na imagem "Correção: ${text}".`.slice(0, 2000),
         attachments: [asset.id, shot.id],
-        model,
+        ...agentChoice(),
       });
     } catch (e) {
       setRunning(false);
@@ -214,12 +222,9 @@ export default function App() {
         onStop={() => api.stop(project.id)}
         attachments={attachments}
         setAttachments={setAttachments}
-        models={[...new Set([model, settings?.deepseekModel, ...models].filter(Boolean))]}
-        model={model}
-        setModel={(m) => {
-          setModel(m);
-          localStorage.setItem('trama:model', m);
-        }}
+        settings={settings}
+        onSettingsSaved={setSettings}
+        onOpenSettings={openSettings}
         onFocus={focusAsset}
         onRename={(title) => api.renameProject(project.id, title).catch((e) => say(e.message))}
       />
@@ -239,11 +244,11 @@ export default function App() {
       {modal === 'settings' && (
         <Settings
           settings={settings}
+          initialProvider={settingsProvider}
           onClose={() => setModal(null)}
           onSaved={(s) => {
             setSettings(s);
             api.comfyStatus().then(setComfy).catch(() => setComfy({ ok: false }));
-            if (s.deepseekKeySet) api.deepseekModels().then((r) => setModels(r.models)).catch(() => setModels([]));
           }}
         />
       )}

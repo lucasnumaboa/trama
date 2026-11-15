@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { fileUrl } from './api.js';
 import { Icon, RichText, KIND_LABEL } from './ui.jsx';
 import Composer, { Thumb } from './Composer.jsx';
+import { linkInfo, linkPreview, splitUrls } from './links.js';
+import AgentPicker from './AgentPicker.jsx';
 
 const SUGGESTIONS = [
   { icon: 'image', text: 'Crie 3 opções de capa para um vídeo sobre café da manhã' },
@@ -20,6 +22,31 @@ function AssetChip({ asset, onClick }) {
   );
 }
 
+/** Link mostrado como tag: miniatura, título do vídeo (quando o site informa) e abre no navegador. */
+function LinkChip({ url }) {
+  const info = linkInfo(url);
+  const [preview, setPreview] = useState({});
+  useEffect(() => {
+    let alive = true;
+    linkPreview(url).then((p) => alive && setPreview(p));
+    return () => {
+      alive = false;
+    };
+  }, [url]);
+  const thumb = info.thumb || preview.thumbnail;
+  return (
+    <a className={`ref-chip ref-link ref-link-${info.site}`} href={url} target="_blank" rel="noreferrer" title={url}>
+      {thumb && <img src={thumb} alt="" />}
+      <span>{preview.title || info.label}</span>
+    </a>
+  );
+}
+
+/** Texto com os links como tags. */
+function TextWithLinks({ text }) {
+  return splitUrls(text).map((part, i) => (part.url ? <LinkChip key={i} url={part.url} /> : <span key={i}>{part.text}</span>));
+}
+
 /** Texto do usuário com as referências "@{asset_x}" mostradas como chips. */
 function UserText({ text, assets, onFocus }) {
   const parts = String(text).split(/(@\{asset_[0-9a-f]{8}\})/g);
@@ -27,7 +54,7 @@ function UserText({ text, assets, onFocus }) {
     <div className="bubble">
       {parts.map((p, i) => {
         const m = /^@\{(asset_[0-9a-f]{8})\}$/.exec(p);
-        if (!m) return <span key={i}>{p}</span>;
+        if (!m) return <TextWithLinks key={i} text={p} />;
         const a = assets.find((x) => x.id === m[1]);
         return a ? (
           <span key={i} className={`ref-chip ref-${a.kind}`} onClick={() => onFocus(a.id)}>
@@ -258,7 +285,7 @@ function Message({ m, assets, onFocus, onAnswer, running }) {
   );
 }
 
-export default function Chat({ project, running, onSend, onStop, attachments, setAttachments, models, model, setModel, onFocus, onRename, onUploaded }) {
+export default function Chat({ project, running, onSend, onStop, attachments, setAttachments, settings, onSettingsSaved, onOpenSettings, onFocus, onRename, onUploaded }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const scroller = useRef(null);
   const composer = useRef(null);
@@ -288,6 +315,7 @@ export default function Chat({ project, running, onSend, onStop, attachments, se
             {project?.title || 'Trama'}
           </h2>
         )}
+        <AgentPicker settings={settings} onSaved={onSettingsSaved} onOpenSettings={onOpenSettings} />
       </header>
 
       <div className="chat-scroll" ref={scroller}>
@@ -322,9 +350,9 @@ export default function Chat({ project, running, onSend, onStop, attachments, se
           setAttachments={setAttachments}
           onSend={onSend}
           onStop={onStop}
-          models={models}
-          model={model}
-          setModel={setModel}
+          settings={settings}
+          onSettingsSaved={onSettingsSaved}
+          onOpenSettings={onOpenSettings}
           onFocus={onFocus}
           onUploaded={onUploaded}
         />

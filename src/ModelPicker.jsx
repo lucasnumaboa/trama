@@ -1,8 +1,9 @@
-// Seletor de modelos do chat: agente (DeepSeek) e o modelo de cada capacidade,
+// Seletor de modelos do chat: agente (provedor de IA) e o modelo de cada capacidade,
 // escolhido para este projeto (e, opcionalmente, como padrão geral).
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { Icon } from './ui.jsx';
+import { AgentMenu } from './AgentPicker.jsx';
 
 const TABS = [
   { id: 'agent', label: 'Agente', icon: 'chat' },
@@ -29,7 +30,7 @@ function Avatar({ name }) {
   );
 }
 
-export default function ModelPicker({ project, models, model, setModel, onClose }) {
+export default function ModelPicker({ project, settings, onSettingsSaved, onOpenSettings, onClose }) {
   const box = useRef(null);
   const [tab, setTab] = useState('video');
   const [caps, setCaps] = useState([]);
@@ -74,7 +75,7 @@ export default function ModelPicker({ project, models, model, setModel, onClose 
     }
   }
 
-  const count = (t) => (t.categories ? caps.filter((c) => t.categories.includes(c.id)).reduce((n, c) => n + c.models.length, 0) : models.length);
+  const count = (t) => (t.categories ? caps.filter((c) => t.categories.includes(c.id)).reduce((n, c) => n + c.models.length, 0) : 0);
   const current = TABS.find((t) => t.id === tab);
 
   return (
@@ -93,24 +94,7 @@ export default function ModelPicker({ project, models, model, setModel, onClose 
       </div>
 
       <div className="mp-list">
-        {tab === 'agent' &&
-          (models.length ? (
-            <>
-              <div className="mp-section">Modelo que conversa e orquestra</div>
-              {models.map((m) => (
-                <button key={m} className={`mp-item ${m === model ? 'selected' : ''}`} onClick={() => setModel(m)}>
-                  <Avatar name={m} />
-                  <span className="mp-text">
-                    <span className="mp-name">{m}</span>
-                    <span className="mp-meta">DeepSeek · chamada de ferramentas</span>
-                  </span>
-                  {m === model && <Icon name="check" size={15} className="mp-check" />}
-                </button>
-              ))}
-            </>
-          ) : (
-            <div className="muted small pad">Configure a chave do DeepSeek nas Configurações.</div>
-          ))}
+        {tab === 'agent' && <AgentMenu settings={settings} onSaved={onSettingsSaved} onOpenSettings={(id) => { onClose(); onOpenSettings?.(id); }} />}
 
         {current.categories &&
           caps

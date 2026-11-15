@@ -4,6 +4,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import { api, fileUrl } from './api.js';
 import { Icon } from './ui.jsx';
 import ModelPicker from './ModelPicker.jsx';
+import { cleanUrl, linkInfo, linkPreview, splitUrls } from './links.js';
 
 const isMediaFile = (f) => /^(image|video|audio)\//.test(f.type);
 
@@ -34,6 +35,48 @@ function makeChip(asset) {
   return chip;
 }
 
+/** Tag de link (YouTube e outros): ícone/miniatura e o título, que chega depois. */
+function makeLinkChip(rawUrl) {
+  const url = cleanUrl(rawUrl);
+  const info = linkInfo(url);
+  const chip = document.createElement('span');
+  chip.className = `ref-chip ref-link ref-link-${info.site}`;
+  chip.contentEditable = 'false';
+  chip.dataset.url = url;
+  chip.title = url;
+  if (info.thumb) {
+    const img = document.createElement('img');
+    img.src = info.thumb;
+    img.alt = '';
+    chip.appendChild(img);
+  }
+  const label = document.createElement('span');
+  label.textContent = info.label;
+  chip.appendChild(label);
+  linkPreview(url).then((p) => {
+    if (p.title) label.textContent = p.title;
+    if (!info.thumb && p.thumbnail) {
+      const img = document.createElement('img');
+      img.src = p.thumbnail;
+      img.alt = '';
+      chip.prepend(img);
+    }
+  });
+  return chip;
+}
+
+/** Fragmento com o texto e os links já como tags. */
+function linkify(text) {
+  const frag = document.createDocumentFragment();
+  for (const part of splitUrls(text)) {
+    if (part.url) {
+      frag.appendChild(makeLinkChip(part.url));
+      frag.appendChild(document.createTextNode(' '));
+    } else frag.appendChild(document.createTextNode(part.text));
+  }
+  return frag;
+}
+
 /** Converte o editor em texto com "@{asset_x}" no lugar das referências. */
 function serialize(root) {
   let out = '';
@@ -41,6 +84,7 @@ function serialize(root) {
     for (const n of node.childNodes) {
       if (n.nodeType === Node.TEXT_NODE) out += n.textContent;
       else if (n.dataset?.asset) out += `@{${n.dataset.asset}}`;
+      else if (n.dataset?.url) out += `${out && !/\s$/.test(out) ? ' ' : ''}${n.dataset.url} `;
       else if (n.nodeName === 'BR') out += '\n';
       else {
         if (n.nodeName === 'DIV' && out && !out.endsWith('\n')) out += '\n';
@@ -53,7 +97,7 @@ function serialize(root) {
 }
 
 const Composer = forwardRef(function Composer(
-  { project, running, attachments, setAttachments, onSend, onStop, models, model, setModel, onFocus, onUploaded },
+  { project, running, attachments, setAttachments, onSend, onStop, settings, onSettingsSaved, onOpenSettings, onFocus, onUploaded },
   ref,
 ) {
   const editor = useRef(null);
@@ -102,6 +146,67 @@ const Composer = forwardRef(function Composer(
     sel.addRange(range);
     savedRange.current = range.cloneRange();
     setEmpty(false);
+  }
+
+  /** Insere nós no cursor (ou no fim) e deixa o cursor depois deles. */
+  function insertAtCaret(frag) {
+    const el = editor.current;
+    if (!el) return;
+    const sel = window.getSelection();
+    let range = sel?.rangeCount && el.contains(sel.anchorNode) ? sel.getRangeAt(0) : null;
+    if (!range) {
+      range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+    }
+    const last = frag.lastChild;
+    range.deleteContents();
+    range.insertNode(frag);
+    if (last) {
+      range.setStartAfter(last);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    savedRange.current = range.cloneRange();
+    setEmpty(!serialize(el));
+  }
+
+  // Link digitado: vira tag quando já está completo (com espaço ou quebra de linha
+  // depois). O cursor volta para o mesmo ponto do texto.
+  function linkifyTyped() {
+    const el = editor.current;
+    if (!el) return;
+    const sel = window.getSelection();
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) if (/https?:\/\/\S+\s/.test(n.textContent)) nodes.push(n);
+    if (!nodes.length) return;
+    let caretAfter = null;
+    for (const node of nodes) {
+      const hadCaret = sel?.anchorNode === node;
+      const text = node.textContent;
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      let lastChip = null;
+      for (const m of text.matchAll(/(https?:\/\/\S+)(?=\s)/g)) {
+        frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+        lastChip = makeLinkChip(m[1]);
+        frag.appendChild(lastChip);
+        last = m.index + m[1].length;
+      }
+      const tail = document.createTextNode(text.slice(last));
+      frag.appendChild(tail);
+      node.replaceWith(frag);
+      if (hadCaret) caretAfter = tail;
+    }
+    if (caretAfter && sel) {
+      const r = document.createRange();
+      r.setStart(caretAfter, caretAfter.textContent.length);
+      r.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(r);
+    }
   }
 
   async function uploadFiles(files) {
@@ -203,7 +308,10 @@ const Composer = forwardRef(function Composer(
           className="editor"
           contentEditable={Boolean(project)}
           suppressContentEditableWarning
-          onInput={() => setEmpty(!serialize(editor.current))}
+          onInput={(e) => {
+            if (/\s/.test(e.nativeEvent?.data || '') || e.nativeEvent?.inputType === 'insertParagraph') linkifyTyped();
+            setEmpty(!serialize(editor.current));
+          }}
           onKeyUp={rememberCaret}
           onMouseUp={rememberCaret}
           onBlur={rememberCaret}
@@ -220,9 +328,10 @@ const Composer = forwardRef(function Composer(
               uploadFiles(files);
               return;
             }
-            // Cola só texto puro (sem formatação de outras páginas).
+            // Cola só texto puro (sem formatação de outras páginas); links viram tags.
             const text = e.clipboardData.getData('text/plain');
-            document.execCommand('insertText', false, text);
+            if (/https?:\/\//.test(text)) insertAtCaret(linkify(text));
+            else document.execCommand('insertText', false, text);
           }}
         />
       </div>
@@ -236,7 +345,7 @@ const Composer = forwardRef(function Composer(
             <Icon name="cube" size={14} /> Modelos
           </button>
           {picker && (
-            <ModelPicker project={project} models={models} model={model} setModel={setModel} onClose={() => setPicker(false)} />
+            <ModelPicker project={project} settings={settings} onSettingsSaved={onSettingsSaved} onOpenSettings={onOpenSettings} onClose={() => setPicker(false)} />
           )}
         </div>
         <span className="grow" />

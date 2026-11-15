@@ -332,8 +332,8 @@ export default function Sidebar({ projects, folders = [], currentId, onSelect, o
           <span title={comfy?.ok ? (comfy.devices || []).join(', ') : comfy?.error}>ComfyUI {comfy?.ok ? comfy.version : 'offline'}</span>
         </div>
         <div className="status-line">
-          <span className={`dot ${settings?.deepseekKeySet ? 'ok' : 'bad'}`} />
-          <span>DeepSeek {settings?.deepseekKeySet ? 'conectado' : '(sem chave)'}</span>
+          <span className={`dot ${settings?.providers?.[settings?.llmProvider]?.ready ? 'ok' : 'bad'}`} />
+          <span>{(settings?.providers?.[settings?.llmProvider]?.label || 'IA').replace(/\s*\(.*\)$/, '')} {settings?.providers?.[settings?.llmProvider]?.ready ? 'conectado' : '(sem chave)'}</span>
         </div>
         <button className="side-item" onClick={onSettings}>
           <Icon name="gear" />

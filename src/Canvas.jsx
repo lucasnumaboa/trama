@@ -245,7 +245,8 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
         return {
           id: a.id,
           type: 'asset',
-          position: old?.dragging ? old.position : a.position,
+          // Card sem posição (dado antigo ou criado à mão) não pode derrubar o canvas.
+          position: old?.dragging ? old.position : a.position || { x: 0, y: 0 },
           dragging: old?.dragging,
           selected: selectedIds.includes(a.id),
           data: { asset: a, onOpen, onVersion },

@@ -474,3 +474,36 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 .export-stl button { flex: 1; }
 .export-stl label { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); white-space: nowrap; padding-right: 6px; }
 .export-stl input { width: 64px; }
+
+/* ---- Link colado (YouTube e outros) como tag ---- */
+.ref-chip.ref-link { background: rgba(255, 255, 255, 0.07); border-color: rgba(255, 255, 255, 0.18); color: var(--text); text-decoration: none; max-width: 280px; cursor: pointer; }
+.ref-chip.ref-link img { width: 34px; height: 20px; object-fit: cover; }
+.ref-chip.ref-link-youtube { background: rgba(255, 60, 60, 0.13); border-color: rgba(255, 80, 80, 0.4); color: #ffd6d6; }
+.ref-chip.ref-link-instagram, .ref-chip.ref-link-tiktok { background: rgba(255, 122, 182, 0.12); border-color: rgba(255, 122, 182, 0.35); }
+.ref-chip.ref-link:hover { filter: brightness(1.15); }
+
+/* ---- Agente do chat: provedor e modelo ---- */
+.chat-head { gap: 10px; }
+.agent-picker { position: relative; margin-left: auto; flex: none; }
+.agent-btn { display: inline-flex; align-items: center; gap: 6px; max-width: 230px; height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text-2); font-size: 12px; cursor: pointer; }
+.agent-btn:hover { background: var(--panel-3); color: var(--text); }
+.agent-btn.warn { border-color: rgba(240, 184, 79, 0.5); }
+.agent-name { font-weight: 600; color: var(--text); white-space: nowrap; }
+.agent-model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.agent-chev { transform: rotate(90deg); opacity: 0.6; flex: none; }
+.agent-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; display: inline-block; }
+.agent-dot.ok { background: var(--ok); box-shadow: 0 0 0 3px rgba(60, 207, 142, 0.15); }
+.agent-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; width: 320px; max-height: 70vh; overflow: auto; padding: 6px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line-2); box-shadow: var(--shadow); }
+.agent-menu { display: flex; flex-direction: column; gap: 2px; }
+.agent-menu .mp-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 9px; border-radius: 8px; border: 0; background: none; color: var(--text); text-align: left; cursor: pointer; }
+.agent-menu .mp-item:hover { background: var(--panel-3); }
+.agent-menu .mp-item.selected { background: rgba(139, 124, 255, 0.14); }
+.agent-models { max-height: 240px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.agent-custom { display: flex; gap: 6px; padding: 6px 4px 2px; }
+.agent-custom input { flex: 1; min-width: 0; }
+.agent-menu .link-btn { display: flex; align-items: center; gap: 6px; margin-top: 4px; padding: 8px 9px; border: 0; border-top: 1px solid var(--line); background: none; color: var(--muted); font-size: 12px; cursor: pointer; text-align: left; }
+.agent-menu .link-btn:hover { color: var(--text); }
+.provider-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.provider-tabs button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text-2); font-size: 12px; cursor: pointer; }
+.provider-tabs button.on { border-color: var(--primary); color: var(--text); background: rgba(139, 124, 255, 0.14); }
+.provider-tabs small { color: var(--muted); }

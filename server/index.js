@@ -7,7 +7,7 @@ import { Readable, pipeline } from 'node:stream';
 import { spawn } from 'node:child_process';
 import * as comfy from './comfy.js';
 import { describeByName } from './exec.js';
-import { listModels } from './deepseek.js';
+import { listModels } from './llm.js';
 import { publicSettings, updateSettings } from './settings.js';
 import { listCapabilities, setDefaultModel, addModel, removeModel, modelInCategory } from './capabilities.js';
 import * as projects from './projects.js';
@@ -30,6 +30,8 @@ const wrap = (fn) => (req, res) =>
 app.get('/api/settings', (req, res) => res.json(publicSettings()));
 app.put('/api/settings', wrap((req, res) => res.json(updateSettings(req.body || {}))));
 app.get('/api/deepseek/models', wrap(async (req, res) => res.json({ models: await listModels() })));
+// Modelos de um provedor (?provider=openai). Sem provider: o ativo.
+app.get('/api/llm/models', wrap(async (req, res) => res.json({ models: await listModels(req.query.provider ? String(req.query.provider) : undefined) })));
 
 // ---- Capacidades (modelos padrão por categoria) ----
 app.get('/api/capabilities', wrap(async (req, res) => {
@@ -49,6 +51,33 @@ app.delete('/api/capabilities/models/:id', wrap((req, res) => {
 }));
 
 // ---- ComfyUI ----
+// Título e miniatura de um link colado no chat (oEmbed público dos sites de vídeo).
+const OEMBED = [
+  [/(^|\.)(youtube\.com|youtu\.be)$/, 'https://www.youtube.com/oembed?format=json&url='],
+  [/(^|\.)vimeo\.com$/, 'https://vimeo.com/api/oembed.json?url='],
+  [/(^|\.)tiktok\.com$/, 'https://www.tiktok.com/oembed?url='],
+];
+app.get('/api/link/preview', wrap(async (req, res) => {
+  let u;
+  try {
+    u = new URL(String(req.query.url || ''));
+  } catch {
+    return res.status(400).json({ error: 'link inválido' });
+  }
+  if (!/^https?:$/.test(u.protocol)) return res.status(400).json({ error: 'só http(s)' });
+  const host = u.hostname.replace(/^www\./, '');
+  const endpoint = OEMBED.find(([re]) => re.test(host))?.[1];
+  if (!endpoint) return res.json({ site: host });
+  try {
+    const r = await fetch(endpoint + encodeURIComponent(u.toString()), { signal: AbortSignal.timeout(6000) });
+    if (!r.ok) return res.json({ site: host });
+    const j = await r.json();
+    res.json({ site: host, title: j.title, author: j.author_name, thumbnail: j.thumbnail_url });
+  } catch {
+    res.json({ site: host });
+  }
+}));
+
 app.get('/api/comfy/status', wrap(async (req, res) => {
   try {
     const stats = await comfy.systemStats();
@@ -179,8 +208,8 @@ app.delete('/api/projects/:id', wrap((req, res) => {
 }));
 
 app.post('/api/projects/:id/messages', wrap(async (req, res) => {
-  const { text, attachments, model } = req.body || {};
-  res.json(await sendMessage(req.params.id, { text, attachments, model }));
+  const { text, attachments, model, provider } = req.body || {};
+  res.json(await sendMessage(req.params.id, { text, attachments, model, provider }));
 }));
 app.post('/api/projects/:id/stop', (req, res) => res.json({ stopped: stopAgent(req.params.id) }));
 
