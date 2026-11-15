@@ -3,7 +3,7 @@
 import * as comfy from './comfy.js';
 import { describeByName, runWorkflow } from './exec.js';
 import { editMedia, mediaInfo, OPERATIONS, SINGLE_INPUT_OPS, NoChange } from './media.js';
-import { readImage, readVideo, readPeople, findPerson, describeCharacter } from './vision.js';
+import { readImage, readVideo, readPeople, findPerson, describeCharacter, visionIsFresh, VISION_VERSION } from './vision.js';
 import { reviewGeneration } from './review.js';
 import { getSettings } from './settings.js';
 import { meshStats } from './model3d.js';
@@ -642,7 +642,7 @@ async function triage(ctx, asset, { request, characters, check }) {
   updateAsset(p, asset.id, { detail: 'Conferindo se saiu como pedido' });
   try {
     const r = await reviewGeneration(asset, { request, characters, width: check?.width, height: check?.height, signal: ctx.signal });
-    updateAsset(p, asset.id, { detail: '', vision: r.seen, review: { ok: r.ok, problems: r.problems, minor: r.minor } }, { persist: true });
+    updateAsset(p, asset.id, { detail: '', vision: r.seen, visionVersion: VISION_VERSION, review: { ok: r.ok, problems: r.problems, minor: r.minor } }, { persist: true });
     return {
       ok: r.ok,
       problems: r.problems,
@@ -968,20 +968,20 @@ export async function runTool(name, args, ctx) {
       if (a.kind === 'model3d') throw new Error('look_at não abre modelo 3D. Olhe a imagem de onde ele saiu (a entrada ligada ao card) ou a foto do ponto marcado que o usuário mandou.');
       if (!a.file || (a.kind !== 'image' && a.kind !== 'video')) throw new Error('look_at olha imagens e vídeos; esse card não é nenhum dos dois.');
       if (a.status === 'generating') throw new Error('Esse card ainda está gerando.');
-      if (a.vision && !args.refresh) {
+      if (visionIsFresh(a) && !args.refresh) {
         // Já lida: devolve a descrição guardada, sem passar pelo modelo de novo.
         return { label: `Usou a descrição que já tinha de "${a.title}"`, result: { asset_id: a.id, title: a.title, description: a.vision, cached: true } };
       }
       if (a.kind === 'video') {
         ctx.step({ label: `Olhando o vídeo "${a.title}"`, assetIds: [a.id] });
         const vision = await readVideo(a, { signal: ctx.signal });
-        updateAsset(p, a.id, { vision });
+        updateAsset(p, a.id, { vision, visionVersion: VISION_VERSION });
         saveProject(p);
         return { label: `Olhou o vídeo "${a.title}"`, result: { asset_id: a.id, title: a.title, description: vision } };
       }
       ctx.step({ label: `Olhando "${a.title}"` });
       const r = await readImage(a, { signal: ctx.signal });
-      updateAsset(p, a.id, { vision: r.vision, characterSheet: r.character || undefined });
+      updateAsset(p, a.id, { vision: r.vision, visionVersion: VISION_VERSION, characterSheet: r.character || undefined });
       saveProject(p);
       return { label: `Olhou "${a.title}"`, result: { asset_id: a.id, title: a.title, description: a.vision } };
     }

@@ -6,7 +6,7 @@ import { getProject, saveProject, emit, shortId, describeAsset } from './project
 import { capabilityPromptBlock } from './capabilities.js';
 import * as comfy from './comfy.js';
 import { getSettings } from './settings.js';
-import { readImage } from './vision.js';
+import { readImage, visionIsFresh, VISION_VERSION } from './vision.js';
 import { castPromptBlock } from './cast.js';
 
 const running = new Map(); // projectId -> AbortController
@@ -232,7 +232,7 @@ export async function sendMessage(projectId, { text, attachments = [], model }) 
     try {
       // Olha as fotos anexadas antes de pensar: o agente precisa saber quem e o que
       // está nelas para usar isso em vez de inventar personagens.
-      const toSee = user.attachments.map((id) => p.assets.find((a) => a.id === id)).filter((a) => a?.kind === 'image' && a.file && !a.vision);
+      const toSee = user.attachments.map((id) => p.assets.find((a) => a.id === id)).filter((a) => a?.kind === 'image' && a.file && !visionIsFresh(a));
       for (const a of toSee) {
         const part = { type: 'step', id: shortId('look'), tool: 'look_at', label: `Olhando "${a.title}"`, status: 'running', assetIds: [a.id] };
         reply.parts.push(part);
@@ -242,6 +242,7 @@ export async function sendMessage(projectId, { text, attachments = [], model }) 
           // (define_character reaproveita, sem passar a imagem pelo modelo de novo).
           const r = await readImage(a, { signal: controller.signal });
           a.vision = r.vision;
+          a.visionVersion = VISION_VERSION;
           a.characterSheet = r.character || undefined;
           Object.assign(part, { status: 'done', label: `Olhou "${a.title}"` });
         } catch (error) {

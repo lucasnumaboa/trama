@@ -12,8 +12,15 @@ const VISION_MODELS = [
   ['qwen3.5_9b_qwen_image_2.1_pe_i2i.int8_convrot.safetensors', 'qwen_image'],
 ];
 
+// Versão das perguntas de leitura: descrições guardadas com uma versão mais antiga são
+// lidas de novo (ex.: a v1 só perguntava por "pessoas" e ignorava personagens de desenho).
+export const VISION_VERSION = 2;
+/** A descrição guardada no card ainda vale (foi feita com as perguntas atuais)? */
+export const visionIsFresh = (asset) => Boolean(asset?.vision) && (asset.visionVersion || 1) >= VISION_VERSION;
+
 const ASK = `Describe this image for a film director who must keep continuity in new scenes.
-1. People: for EACH person, from left to right: position in frame, which side of any counter or stall they stand on (behind it = serving, in front = customer), gender, approximate age, height and body proportions compared with an average adult (e.g. very short with a large head, child-sized, tall, giant), build (slim, average, stocky, heavy, obese, muscular), skin tone, hair (color, length, cut), facial hair, glasses (shape), unusual features (pointed ears, scars, eyepatch, tattoos), clothing (colors, type), accessories, expression, exactly what each hand is doing or holding, and their likely role.
+0. Style: photo, 3D render, 2D cartoon or animation (color or black-and-white), illustration, anime, painting, etc.
+1. People and characters: count as a character every person AND every cartoon or animated character, anthropomorphic animal, mascot, creature, toy or figure that has a face or acts like a person (e.g. a cartoon mouse steering a ship is a character). For EACH one, from left to right: what it is (human, cartoon mouse, robot...), position in frame, which side of any counter or stall they stand on (behind it = serving, in front = customer), gender, approximate age, height and body proportions compared with an average adult (e.g. very short with a large head, child-sized, tall, giant), build (slim, average, stocky, heavy, obese, muscular), skin tone, hair (color, length, cut), facial hair, glasses (shape), unusual features (pointed ears, scars, eyepatch, tattoos), clothing (colors, type), accessories, expression, exactly what each hand is doing or holding, and their likely role.
 2. Setting: place, objects, colors, signs or text.
 3. Light and time of day.
 4. Camera: shot size, angle, orientation (vertical/horizontal).
@@ -44,7 +51,7 @@ Plain text, these labels only, no extra commentary.`;
 // e registrar o personagem depois (define_character) não precisa ler de novo.
 const FULL_ASK = `${ASK.replace('under 250 words', 'under 250 words for this part')}
 
-Then, if the image shows ONE main character (a single person or creature, or one clearly in focus), add a line "CHARACTER SHEET" followed by these labelled lines about that character, judging proportions against an average adult human:
+Then, if the image shows ONE main character (a single person, cartoon or animated character, animal or creature, or one clearly in focus), add a line "CHARACTER SHEET" followed by these labelled lines about that character, judging proportions against an average adult human:
 ${SHEET_FIELDS}
 If there is no single main character, write "CHARACTER SHEET: none".`;
 
@@ -99,7 +106,7 @@ function sheetToCharacter(sheet) {
 /** Só a descrição da cena (compatível com o uso antigo). */
 // Vídeo: três quadros lado a lado (início, meio, fim).
 const VIDEO_ASK = `This picture shows three frames of one short video, left to right: beginning, middle and end.
-Describe the video in under 220 words: who is in it (for each person: build, face, hair, facial hair, glasses, clothes), where it happens, what happens from the first to the last frame, and the camera.
+Describe the video in under 220 words: the style (live action, 3D, 2D cartoon...), who is in it (every person and every cartoon or animated character, animal or creature that acts like a person; for each one: what it is, build, face, hair, facial hair, glasses, clothes), where it happens, what happens from the first to the last frame, and the camera.
 Then, on a line starting with "PROBLEMS:", list visible defects: a person whose face, body or clothes change between frames, deformed hands or faces, extra or missing limbs, people merging, text glitches. Write "PROBLEMS: none" if there are none.
 Plain text, factual, no guessing about sound.`;
 
@@ -111,7 +118,7 @@ export async function readVideo(asset, { signal } = {}) {
 
 // Pessoas de um vídeo: seis quadros em duas fileiras, para a troca de personagem.
 const PEOPLE_ASK = `This picture shows six frames of one video in time order: top row left to right (frames 1-3), then bottom row left to right (frames 4-6).
-List every DISTINCT person (or character) who appears, including people only partly visible at the edges of the frame, counting the same person only once even if they move or turn.
+List every DISTINCT person or character (including cartoon or animated characters, anthropomorphic animals and creatures) who appears, including people only partly visible at the edges of the frame, counting the same person only once even if they move or turn.
 For each one write exactly one line:
 PERSON <n>: <short English label that tells them apart in a prompt, e.g. "the bald man in the blue apron"> | <gender, approximate age, build, skin tone, hair, facial hair, glasses, clothes> | <where they usually are in the frame> | <frames where they appear, e.g. 1,2,5> | <what they do>
 Then one line starting with "SCENE:" describing the place and the camera in under 40 words.
@@ -189,7 +196,7 @@ export async function findPerson(asset, photo, people, { signal } = {}) {
 
 // Triagem de uma imagem gerada: o que um revisor precisa para comparar com o pedido.
 const REVIEW_ASK = `Describe this generated picture for a quality check.
-First, one line per DISTINCT person or character, left to right:
+First, one line per DISTINCT person or character (cartoon or animated characters, anthropomorphic animals and creatures count too), left to right:
 PERSON <n>: <gender, age, build, hair, facial hair, glasses, eyepatch, clothes, props> | <where in the frame> | <facing the camera, from behind, profile> | <what they do>
 If the SAME person appears twice (same face, clothes or hat, even from a different angle), still write one line for each copy.
 Then: "FRAME: <horizontal, vertical or square>, <shot size and angle>".
