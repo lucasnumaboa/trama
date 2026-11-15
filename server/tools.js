@@ -11,6 +11,7 @@ import { getSettings } from './settings.js';
 import { meshStats } from './model3d.js';
 import { analyzeAudio, suggestPitchShift, findPhrase, swapLyrics } from './audio.js';
 import { listCapabilities } from './capabilities.js';
+import { isFlatDrawing, toonWorkflow, TOON_PROMPT } from './drawing.js';
 import { swapVideo, planChunks, matchPerson, DEFAULT_CHUNK, MAX_CHUNK, SWAP_WORKFLOW } from './swap.js';
 import { castOf, findCharacter, upsertCharacter, removeCharacter, mentionedCharacters, placeCharacters } from './cast.js';
 import {
@@ -55,6 +56,7 @@ export const TOOL_SCHEMAS = [
           additionalProperties: { type: 'string' },
         },
         allow_default_inputs: { type: 'boolean', description: 'Só true se o usuário pediu para usar os arquivos de exemplo do workflow nos slots vazios.' },
+        keep_flat_drawing: { type: 'boolean', description: 'Só para workflows de modelo 3D. O Trama transforma sozinho um desenho chapado em preto e branco num boneco 3D antes de gerar o modelo (senão sai escuro). true só se o usuário pediu para usar o desenho exatamente como está.' },
         characters: {
           type: 'array',
           items: { type: 'string' },
@@ -517,13 +519,42 @@ const findAsset = (p, id) => {
 };
 
 // ---- Geração (nova ou como versão) -------------------------------------------
-async function generate(ctx, { name, values = {}, inputs = {}, characters = [], allowDefault = false, title, reviseId, note }) {
+async function generate(ctx, { name, values = {}, inputs = {}, characters = [], allowDefault = false, keepFlat = false, title, reviseId, note }) {
   const p = ctx.project;
   const d = await describeByName(name);
   const media = {};
   const inputIds = [];
   inputs = resolveSlots(p, d, inputs);
   values = resolveValues(d, values);
+  const notices = [];
+  // Desenho chapado em preto e branco vira boneco 3D antes do modelo (veja drawing.js).
+  const preCreated = [];
+  if (d.outputs[0]?.kind === 'model3d' && !keepFlat) {
+    for (const m of d.mediaInputs.filter((x) => x.kind === 'image')) {
+      const src = inputs[m.id] && p.assets.find((a) => a.id === inputs[m.id]);
+      if (!src?.file || src.kind !== 'image') continue;
+      ctx.step({ label: `Conferindo se "${src.title}" é um desenho chapado`, assetIds: [src.id] });
+      const flat = await isFlatDrawing(src, { signal: ctx.signal }).catch((error) => {
+        if (ctx.signal?.aborted) throw error;
+        return null;
+      });
+      saveProject(p);
+      if (!flat) continue;
+      const ed = await toonWorkflow();
+      const edPrompt = ed && promptField(ed);
+      if (!edPrompt) {
+        notices.push(`"${src.title}" é um desenho chapado e o modelo 3D tende a sair escuro, mas não há workflow de edição de uma imagem para transformá-lo em boneco 3D antes.`);
+        continue;
+      }
+      const slot = ed.mediaInputs.find((x) => x.kind === 'image').id;
+      const out = await generate(ctx, { name: ed.name, values: { [edPrompt.id]: TOON_PROMPT }, inputs: { [slot]: src.id }, title: `Boneco 3D: ${src.title}`.slice(0, 80) });
+      const toon = out.assetIds?.[0];
+      if (!toon) continue;
+      preCreated.push(toon);
+      inputs = { ...inputs, [m.id]: toon };
+      notices.push(`"${src.title}" é um desenho chapado em preto e branco: o Trama fez antes uma versão em boneco 3D com as mesmas cores (card ${toon}, "Boneco 3D: ${src.title}") e gerou o modelo a partir dela, porque com o desenho chapado o 3D sai escuro e perde os brancos. Conte isso ao usuário. Se ele quiser o desenho exatamente como está, rode de novo com keep_flat_drawing: true.`);
+    }
+  }
   for (const [slot, assetId] of Object.entries(inputs)) {
     const a = findAsset(p, assetId);
     if (!a.file) throw new Error(`O asset ${assetId} não é um arquivo de mídia`);
@@ -555,7 +586,6 @@ async function generate(ctx, { name, values = {}, inputs = {}, characters = [], 
 
   // Elenco: a foto de cada personagem vira referência e a ficha dele entra no prompt.
   let extraRefs = [];
-  const notices = [];
   let cast = (characters || []).map((n) => {
     const c = findCharacter(p, n);
     if (!c) throw new Error(`"${n}" não está no elenco. Elenco: ${castOf(p).map((x) => x.name).join(', ') || 'vazio'}. Registre com define_character.`);
@@ -597,7 +627,7 @@ async function generate(ctx, { name, values = {}, inputs = {}, characters = [], 
   }
   const mainText = (pf && resolved[pf.id]) || d.fields.filter((f) => f.kind === 'text' && !f.internal).map((f) => resolved[f.id] ?? f.default).find((t) => t && String(t).trim());
   const kind = d.outputs[0]?.kind || 'image';
-  const recipe = { tool: 'run_workflow', workflow: d.name, values, inputs, ...(cast.length ? { characters: cast.map((c) => c.name) } : {}), ...(allowDefault ? { allow_default_inputs: true } : {}) };
+  const recipe = { tool: 'run_workflow', workflow: d.name, values, inputs, ...(cast.length ? { characters: cast.map((c) => c.name) } : {}), ...(allowDefault ? { allow_default_inputs: true } : {}), ...(keepFlat ? { keep_flat_drawing: true } : {}) };
 
   let target;
   let previous;
@@ -661,9 +691,9 @@ async function generate(ctx, { name, values = {}, inputs = {}, characters = [], 
     if (review?.problems?.length) warnings.push(...review.problems.map((x) => `Triagem de "${created[0].title}": ${x}`));
     return {
       label,
-      assetIds: created.map((a) => a.id),
+      assetIds: [...preCreated, ...created.map((a) => a.id)],
       warnings,
-      result: { ok: true, created: created.map(describeAsset), seeds, checks, warnings, ...(review ? { review } : {}), ...(notices.length ? { notes: notices } : {}) },
+      result: { ok: true, created: created.map(describeAsset), ...(preCreated.length ? { made_before: preCreated.map((id) => describeAsset(findAsset(p, id))) } : {}), seeds, checks, warnings, ...(review ? { review } : {}), ...(notices.length ? { notes: notices } : {}) },
     };
   } catch (error) {
     if (reviseId) updateAsset(p, target.id, { status: target.file ? 'ready' : previous.status, error: target.file ? undefined : previous.error, detail: '', progress: 1 }, { persist: true });
@@ -950,7 +980,7 @@ export async function runTool(name, args, ctx) {
     }
 
     case 'run_workflow':
-      return generate(ctx, { name: args.name, values: args.values, inputs: args.inputs, characters: args.characters, allowDefault: args.allow_default_inputs, title: args.title });
+      return generate(ctx, { name: args.name, values: args.values, inputs: args.inputs, characters: args.characters, allowDefault: args.allow_default_inputs, keepFlat: args.keep_flat_drawing, title: args.title });
 
     case 'revise_asset': {
       const a = findAsset(p, args.asset_id);
@@ -970,6 +1000,7 @@ export async function runTool(name, args, ctx) {
         inputs: { ...(r.inputs || {}), ...(args.inputs || {}) },
         characters: args.characters || r.characters || [],
         allowDefault: r.allow_default_inputs,
+        keepFlat: r.keep_flat_drawing,
         reviseId: a.id,
         note: args.note,
       });

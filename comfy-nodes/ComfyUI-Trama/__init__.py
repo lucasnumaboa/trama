@@ -849,6 +849,67 @@ class TramaRiggedToGlb:
 
 
 # ---- Imagem para 3D: objeto escuro ------------------------------------------
+class TramaImageStyle:
+    """Diz se a imagem é um desenho chapado em preto e branco (traço, cartum sem sombra).
+
+    O TRELLIS.2 aprende com objetos que têm volume e luz: com desenho chapado ele pinta
+    a textura quase toda escura e perde as partes brancas. O Trama usa este nó antes de
+    gerar um modelo 3D para decidir se transforma o desenho num boneco 3D primeiro.
+
+    Mede só o objeto: usa a transparência da imagem quando houver; senão, o que difere
+    da cor dos cantos. Chapado = quase sem cor (saturação baixa) e quase sem meios-tons
+    (pouca coisa entre o preto e o branco).
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {"image": ("IMAGE",)},
+            "optional": {"mask": ("MASK", {"tooltip": "Máscara do Load Image (1 = transparente)."})},
+        }
+
+    RETURN_TYPES = ("BOOLEAN", "STRING")
+    RETURN_NAMES = ("flat", "report")
+    FUNCTION = "analyze"
+    OUTPUT_NODE = True
+    CATEGORY = "Trama"
+
+    @staticmethod
+    def measure(image, mask=None):
+        import json
+        img = image[0, ..., :3].float()  # [H, W, 3]
+        h, w = img.shape[:2]
+        fg = None
+        if mask is not None and mask.numel() > 1:
+            m = mask[0] if mask.dim() == 3 else mask
+            if m.shape == (h, w) and float(m.max()) > 0.5:  # tem transparência
+                fg = m < 0.5
+        if fg is None:
+            k = max(2, min(h, w) // 40)
+            corners = torch.cat([img[:k, :k].reshape(-1, 3), img[:k, -k:].reshape(-1, 3), img[-k:, :k].reshape(-1, 3), img[-k:, -k:].reshape(-1, 3)])
+            bg = corners.median(dim=0).values
+            fg = (img - bg).abs().max(dim=-1).values > 0.12
+        n = int(fg.sum())
+        if n < 0.01 * h * w:
+            return False, json.dumps({"flat": False, "reason": "objeto não encontrado"})
+        px = img[fg]
+        mx = px.max(dim=-1).values
+        mn = px.min(dim=-1).values
+        sat = torch.where(mx > 0.05, (mx - mn) / mx.clamp(min=1e-6), torch.zeros_like(mx))
+        luma = px @ torch.tensor([0.299, 0.587, 0.114], device=px.device)
+        mean_sat = float(sat.mean())
+        mid = float(((luma > 0.25) & (luma < 0.75)).float().mean())
+        dark = float((luma <= 0.25).float().mean())
+        flat = mean_sat < 0.15 and mid < 0.12 and dark > 0.1
+        report = {"flat": flat, "mean_saturation": round(mean_sat, 3), "midtones": round(mid, 3), "dark": round(dark, 3), "object_share": round(n / (h * w), 3)}
+        return flat, json.dumps(report)
+
+    def analyze(self, image, mask=None):
+        flat, report = self.measure(image, mask)
+        print(f"[Trama] estilo da imagem: {report}")
+        return {"ui": {"text": [report]}, "result": (flat, report)}
+
+
 class TramaContrastBackground:
     """Cor de fundo para recortar o objeto antes do TRELLIS.2.
 
@@ -921,5 +982,5 @@ class TramaLimitMetallic:
         return (metallic.clamp(max=float(limit)),)
 
 
-NODE_CLASS_MAPPINGS = {"TramaMatchVolume": TramaMatchVolume, "TramaAnalyzeAudio": TramaAnalyzeAudio, "TramaMixAudio": TramaMixAudio, "TramaAudioWindow": TramaAudioWindow, "TramaAceRepaint": TramaAceRepaint, "TramaRepaintSplice": TramaRepaintSplice, "TramaTranscribeAudio": TramaTranscribeAudio, "TramaLoadMesh": TramaLoadMesh, "TramaRiggedToGlb": TramaRiggedToGlb, "TramaContrastBackground": TramaContrastBackground, "TramaLimitMetallic": TramaLimitMetallic}
-NODE_DISPLAY_NAME_MAPPINGS = {"TramaMatchVolume": "Igualar volume (Trama)", "TramaAnalyzeAudio": "Analisar áudio (Trama)", "TramaMixAudio": "Juntar áudios (Trama)", "TramaAudioWindow": "Trecho para regerar (Trama)", "TramaAceRepaint": "Repaint do ACE-Step 1.5 (Trama)", "TramaRepaintSplice": "Colar trecho na música (Trama)", "TramaTranscribeAudio": "Transcrever voz (Trama)", "TramaLoadMesh": "Carregar modelo 3D (Trama)", "TramaRiggedToGlb": "Esqueleto: FBX para GLB (Trama)", "TramaContrastBackground": "Fundo com contraste para 3D (Trama)", "TramaLimitMetallic": "Limitar metal (Trama)"}
+NODE_CLASS_MAPPINGS = {"TramaMatchVolume": TramaMatchVolume, "TramaAnalyzeAudio": TramaAnalyzeAudio, "TramaMixAudio": TramaMixAudio, "TramaAudioWindow": TramaAudioWindow, "TramaAceRepaint": TramaAceRepaint, "TramaRepaintSplice": TramaRepaintSplice, "TramaTranscribeAudio": TramaTranscribeAudio, "TramaLoadMesh": TramaLoadMesh, "TramaRiggedToGlb": TramaRiggedToGlb, "TramaContrastBackground": TramaContrastBackground, "TramaLimitMetallic": TramaLimitMetallic, "TramaImageStyle": TramaImageStyle}
+NODE_DISPLAY_NAME_MAPPINGS = {"TramaMatchVolume": "Igualar volume (Trama)", "TramaAnalyzeAudio": "Analisar áudio (Trama)", "TramaMixAudio": "Juntar áudios (Trama)", "TramaAudioWindow": "Trecho para regerar (Trama)", "TramaAceRepaint": "Repaint do ACE-Step 1.5 (Trama)", "TramaRepaintSplice": "Colar trecho na música (Trama)", "TramaTranscribeAudio": "Transcrever voz (Trama)", "TramaLoadMesh": "Carregar modelo 3D (Trama)", "TramaRiggedToGlb": "Esqueleto: FBX para GLB (Trama)", "TramaContrastBackground": "Fundo com contraste para 3D (Trama)", "TramaLimitMetallic": "Limitar metal (Trama)", "TramaImageStyle": "Desenho chapado? (Trama)"}
