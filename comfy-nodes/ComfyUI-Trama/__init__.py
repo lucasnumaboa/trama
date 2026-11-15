@@ -122,8 +122,9 @@ def _whisper_pipeline(device):
 
 
 class TramaTranscribeAudio:
-    """Transcreve a voz com os tempos de cada frase (Whisper small). Serve para achar onde
-    uma frase é cantada antes de trocar a letra de um trecho, ou para saber o que é dito."""
+    """Transcreve a voz com os tempos de cada frase e de cada palavra (Whisper small). Serve
+    para achar onde uma frase é cantada antes de trocar a letra de um trecho, ou para saber
+    o que é dito."""
 
     LANGUAGES = ["auto", "portuguese", "english", "spanish", "japanese", "french", "italian", "german", "korean", "chinese"]
 
@@ -141,7 +142,7 @@ class TramaTranscribeAudio:
     FUNCTION = "transcribe"
     OUTPUT_NODE = True
     CATEGORY = "audio/trama"
-    DESCRIPTION = "Texto da voz com início e fim de cada frase, em JSON (Whisper small)."
+    DESCRIPTION = "Texto da voz com início e fim de cada frase e de cada palavra, em JSON (Whisper small)."
 
     def transcribe(self, audio, language):
         import json
@@ -165,11 +166,30 @@ class TramaTranscribeAudio:
         segments = []
         if pieces:
             inputs = [{"raw": wave[a:b].cpu().numpy(), "sampling_rate": 16000} for a, b in pieces]
-            outs = asr(inputs, batch_size=8, generate_kwargs={**kwargs, "max_new_tokens": 96})
+            generate = {**kwargs, "max_new_tokens": 96}
+            try:  # com o tempo de cada palavra, para achar a borda exata de uma frase dentro do pedaço
+                outs = asr(inputs, batch_size=8, return_timestamps="word", generate_kwargs=generate)
+            except Exception as error:
+                print(f"[TramaTranscribeAudio] sem tempo por palavra ({error}); só o tempo de cada frase")
+                outs = asr(inputs, batch_size=8, generate_kwargs=generate)
             for (a, b), o in zip(pieces, outs):
                 text = (o.get("text") or "").strip()
-                if text:
-                    segments.append({"start": round(a / 16000, 2), "end": round(b / 16000, 2), "text": text})
+                if not text:
+                    continue
+                start, end = a / 16000, b / 16000
+                segment = {"start": round(start, 2), "end": round(end, 2), "text": text}
+                words = []
+                for chunk in o.get("chunks") or []:
+                    ws, we = chunk.get("timestamp") or (None, None)
+                    word = (chunk.get("text") or "").strip()
+                    if word and ws is not None:
+                        words.append([round(start + ws, 2), round(min(end, start + (we if we is not None else ws)), 2), word])
+                if words:
+                    # O Whisper fecha a última palavra antes de a nota sustentada acabar;
+                    # o fim do pedaço vem do corte nas pausas e é mais confiável.
+                    words[-1][1] = segment["end"]
+                    segment["words"] = words  # [início, fim, palavra]
+                segments.append(segment)
         report = json.dumps({"text": " ".join(s["text"] for s in segments), "segments": segments}, ensure_ascii=False)
         print(f"[TramaTranscribeAudio] {len(segments)} trechos")
         return {"ui": {"text": [report]}, "result": (report,)}
@@ -219,10 +239,10 @@ ACE15_FRAMES_PER_SECOND = 48000.0 / 1920.0
 
 
 class TramaAudioWindow:
-    """Marca um trecho de tempo de um latente de áudio para o KSampler regerar só ele
-    (repaint / trocar a letra de um pedaço da música). Fora do trecho a máscara é 0 e o
-    áudio original fica intacto; nas bordas a máscara sobe e desce em rampa (crossfade)
-    para a emenda não estalar."""
+    """Marca um trecho de tempo de um latente de áudio para regerar só ele (repaint /
+    trocar a letra de um pedaço da música). A máscara vale 1 no trecho e 0 fora. O nó
+    TramaAceRepaint usa a marca para dar a música original de contexto ao modelo, e o
+    TramaRepaintSplice para colar o trecho novo no áudio original."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -232,10 +252,8 @@ class TramaAudioWindow:
                 "start_seconds": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 10000.0, "step": 0.01}),
                 "end_seconds": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 10000.0, "step": 0.01,
                                           "tooltip": "0 = até o fim da música."}),
-                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01,
-                                       "tooltip": "1 = regera o trecho por inteiro; 0,6 a 0,8 fica mais perto do original (melodia mais parecida)."}),
                 "fade_seconds": ("FLOAT", {"default": 0.4, "min": 0.0, "max": 5.0, "step": 0.05,
-                                           "tooltip": "Rampa nas bordas do trecho, para a emenda ficar suave."}),
+                                           "tooltip": "Crossfade em cada borda do trecho, na hora de colar no áudio original."}),
             }
         }
 
@@ -243,9 +261,9 @@ class TramaAudioWindow:
     RETURN_NAMES = ("latent", "seconds", "summary")
     FUNCTION = "mark"
     CATEGORY = "audio/trama"
-    DESCRIPTION = "Máscara de tempo num latente de áudio: o KSampler regera só esse trecho (repaint ou letra nova)."
+    DESCRIPTION = "Marca um trecho de tempo num latente de áudio do ACE-Step 1.5 para regerar só ele (repaint ou letra nova)."
 
-    def mark(self, latent, start_seconds, end_seconds, strength, fade_seconds):
+    def mark(self, latent, start_seconds, end_seconds, fade_seconds):
         samples = latent["samples"]
         total = samples.shape[-1]
         fps = ACE15_FRAMES_PER_SECOND
@@ -254,21 +272,297 @@ class TramaAudioWindow:
         if b <= a:
             raise ValueError("end_seconds precisa ser maior que start_seconds (ou 0 para ir até o fim).")
         mask = torch.zeros(samples.shape[0], 1, total, dtype=torch.float32)
-        mask[:, :, a:b] = float(strength)
-        ramp = int(round(fade_seconds * fps))
-        if ramp > 0:
-            n = min(ramp, a)  # rampa de entrada antes do início
-            if n > 0:
-                mask[:, :, a - n:a] = torch.linspace(0, float(strength), n + 2)[1:-1]
-            n = min(ramp, total - b)  # rampa de saída depois do fim
-            if n > 0:
-                mask[:, :, b:b + n] = torch.linspace(float(strength), 0, n + 2)[1:-1]
+        mask[:, :, a:b] = 1.0
         out = dict(latent)
         out["noise_mask"] = mask.to(samples.device)
+        out["trama_window"] = {"start": a, "end": b, "fade": max(0, int(round(fade_seconds * fps)))}
         seconds = total / fps
-        summary = f"trecho {a / fps:.2f}s–{b / fps:.2f}s de {seconds:.2f}s, força {strength:.2f}, rampa {fade_seconds:.2f}s"
+        summary = f"trecho {a / fps:.2f}s–{b / fps:.2f}s de {seconds:.2f}s, crossfade {fade_seconds:.2f}s"
         print(f"[TramaAudioWindow] {summary}")
         return (out, seconds, summary)
+
+
+def _window_frames(latent):
+    """Quadros (início, fim, crossfade) do trecho marcado pelo TramaAudioWindow."""
+    window = latent.get("trama_window")
+    if window:
+        return int(window["start"]), int(window["end"]), int(window.get("fade", 0))
+    mask = latent.get("noise_mask")
+    if mask is None:
+        raise ValueError("ligue aqui a saída latent do nó 'Trecho para regerar (Trama)'.")
+    on = torch.nonzero(mask.reshape(-1, mask.shape[-1])[0] > 0.5).flatten()
+    if on.numel() == 0:
+        raise ValueError("a máscara do trecho está vazia.")
+    return int(on[0]), int(on[-1]) + 1, 0
+
+
+# Instrução que o ComfyUI põe no prompt do modelo de áudio, e a que o ACE-Step usa no repaint.
+COMFY_INSTRUCTION = "Generate audio semantic tokens based on the given conditions:"
+REPAINT_INSTRUCTION = "Repaint the mask area based on the given conditions:"
+
+
+class _RepaintTokenizer:
+    """Tokenizer do ACE-Step 1.5 que troca a instrução do prompt do modelo de áudio pela
+    de repaint. O ComfyUI monta esse prompt com a instrução fixa dentro da função, então
+    a troca é feita no texto, na hora em que ele é tokenizado."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        if name == "_inner":
+            raise AttributeError(name)
+        return getattr(self._inner, name)
+
+    def tokenize_with_weights(self, text, return_word_ids=False, **kwargs):
+        sub = getattr(self._inner, "qwen3_06b", None)
+        if sub is None:
+            print("[TramaAceRepaint] aviso: este CLIP não é do ACE-Step 1.5; a instrução de repaint não foi aplicada.")
+            return self._inner.tokenize_with_weights(text, return_word_ids, **kwargs)
+        original = sub.tokenize_with_weights
+        swapped = []
+
+        def tokenize(prompt, *args, **kw):
+            if isinstance(prompt, str) and prompt.startswith("# Instruction\n" + COMFY_INSTRUCTION):
+                prompt = prompt.replace(COMFY_INSTRUCTION, REPAINT_INSTRUCTION, 1)
+                swapped.append(True)
+            return original(prompt, *args, **kw)
+
+        sub.tokenize_with_weights = tokenize
+        try:
+            out = self._inner.tokenize_with_weights(text, return_word_ids, **kwargs)
+        finally:
+            sub.__dict__.pop("tokenize_with_weights", None)
+        if not swapped:
+            print("[TramaAceRepaint] aviso: o prompt do ComfyUI mudou de formato; a instrução de repaint não foi aplicada.")
+        return out
+
+
+class TramaAceRepaint:
+    """Repaint de verdade do ACE-Step 1.5. O ComfyUI sempre entrega ao modelo um contexto
+    vazio (fonte em silêncio e máscara toda em 1), que é o modo "criar música do zero".
+    Este nó entrega o contexto do repaint oficial: a música original com o trecho em
+    silêncio, mais a máscara que vale 1 só no trecho. Assim o modelo ouve o que vem antes
+    e depois e continua a mesma música no trecho. Também segue a injeção oficial: a
+    música original é reposta fora do trecho só na primeira parte dos passos."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("MODEL", {"tooltip": "Modelo ACE-Step 1.5 (depois do ModelSamplingAuraFlow)."}),
+                "clip": ("CLIP", {"tooltip": "CLIP do ACE-Step 1.5 (DualCLIPLoader tipo ace)."}),
+                "latent": ("LATENT", {"tooltip": "Saída latent do nó 'Trecho para regerar (Trama)'."}),
+                "injection_ratio": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05,
+                                              "tooltip": "Fração dos passos em que a música original é reposta fora do trecho. 0,5 é o padrão do ACE-Step; 1 repõe em todos os passos."}),
+                "repaint_instruction": ("BOOLEAN", {"default": False,
+                                                    "tooltip": "Usa no prompt a instrução de repaint do ACE-Step no lugar da instrução padrão do ComfyUI. Nos testes não melhorou o resultado; fica desligada por padrão."}),
+            }
+        }
+
+    RETURN_TYPES = ("MODEL", "CLIP")
+    RETURN_NAMES = ("model", "clip")
+    FUNCTION = "patch"
+    CATEGORY = "audio/trama"
+    DESCRIPTION = "Repaint do ACE-Step 1.5: o modelo recebe a música original como contexto e regera só o trecho marcado."
+
+    def patch(self, model, clip, latent, injection_ratio, repaint_instruction):
+        import comfy.ldm.ace.ace_step15 as ace15
+
+        samples = latent["samples"]
+        if samples.dim() != 3 or samples.shape[1] != 64:
+            raise ValueError("o latente não é de áudio do ACE-Step 1.5 (use o VAE Encode Audio com o ace_1.5_vae).")
+        a, b, _ = _window_frames(latent)
+        source = samples.detach().float().cpu().clone()  # [B, 64, T]
+        silence = ace15.get_silence_latent(source.shape[-1], "cpu").float()
+        source[:, :, a:b] = silence[:, :, a:b]
+        chunk = torch.zeros_like(source)
+        chunk[:, :, a:b] = 1.0
+        context = torch.cat([source, chunk], dim=1).movedim(1, 2).contiguous()  # [B, T, 128]
+
+        patched = model.clone()
+        diffusion = patched.model.diffusion_model
+        if not hasattr(diffusion, "prepare_condition"):
+            raise ValueError("o modelo ligado não é o ACE-Step 1.5.")
+        previous = patched.model_options.get("model_function_wrapper")
+
+        def wrapper(apply_model, args):
+            original = diffusion.prepare_condition
+
+            def prepare_condition(*pa, **kw):
+                enc_hidden, enc_mask, ctx = original(*pa, **kw)
+                if ctx.shape[1:] != context.shape[1:]:
+                    raise ValueError(f"o latente do repaint ({context.shape[1]} quadros) não é o mesmo que está sendo gerado ({ctx.shape[1]} quadros).")
+                rep = context.to(device=ctx.device, dtype=ctx.dtype)
+                if rep.shape[0] != ctx.shape[0]:
+                    times = -(-ctx.shape[0] // rep.shape[0])
+                    rep = rep.repeat(times, 1, 1)[: ctx.shape[0]]
+                return enc_hidden, enc_mask, rep
+
+            diffusion.prepare_condition = prepare_condition
+            try:
+                if previous is not None:
+                    return previous(apply_model, args)
+                return apply_model(args["input"], args["timestep"], **args["c"])
+            finally:
+                diffusion.__dict__.pop("prepare_condition", None)
+
+        patched.set_model_unet_function_wrapper(wrapper)
+
+        ratio = float(injection_ratio)
+
+        def denoise_mask(sigma, mask, extra_options=None):
+            # A máscara do KSampler repõe a música original fora do trecho a cada passo.
+            # O repaint oficial faz isso só nos primeiros passos; depois o modelo fica
+            # livre (o contexto já segura o resto) e as bordas se acomodam.
+            sigmas = (extra_options or {}).get("sigmas")
+            if sigmas is None or ratio >= 1.0:
+                return mask
+            cutoff = round(ratio * (len(sigmas) - 1))
+            step = int(torch.argmin((sigmas.to(sigma.device).float() - sigma.flatten()[0].float()).abs()))
+            return mask if step < cutoff else torch.ones_like(mask)
+
+        patched.set_model_denoise_mask_function(denoise_mask)
+
+        out_clip = clip
+        if repaint_instruction:
+            out_clip = clip.clone()
+            out_clip.tokenizer = _RepaintTokenizer(clip.tokenizer)
+        fps = ACE15_FRAMES_PER_SECOND
+        print(f"[TramaAceRepaint] contexto do repaint: trecho {a / fps:.2f}s–{b / fps:.2f}s, injeção {ratio:.2f}, instrução de repaint {'sim' if repaint_instruction else 'não'}")
+        return (patched, out_clip)
+
+
+def _shift(x, k):
+    """x deslocado para que saída[t] = x[t + k] (zeros onde falta sinal)."""
+    if k == 0:
+        return x
+    out = torch.zeros_like(x)
+    if k > 0:
+        out[..., :-k] = x[..., k:]
+    else:
+        out[..., -k:] = x[..., :k]
+    return out
+
+
+def _best_lag(reference, signal, segments, max_lag):
+    """Atraso k (em amostras) em que signal[t + k] mais se parece com reference[t] nos
+    segmentos [(início, fim)], e a correlação nesse atraso. reference e signal são 1D."""
+    n = signal.shape[-1]
+    total = torch.zeros(2 * max_lag + 1, dtype=torch.float64)
+    for s, e in segments:
+        ref = reference[s:e].double()
+        lo, hi = s - max_lag, e + max_lag
+        sig = signal[max(0, lo):min(n, hi)].double()
+        sig = torch.nn.functional.pad(sig, (max(0, -lo), max(0, hi - n)))
+        size = 1 << (sig.shape[-1] - 1).bit_length()
+        cc = torch.fft.irfft(torch.conj(torch.fft.rfft(ref, size)) * torch.fft.rfft(sig, size), size)
+        total += cc[: 2 * max_lag + 1].cpu()
+    k = int(torch.argmax(total)) - max_lag
+    shifted = _shift(signal, k)
+    ref = torch.cat([reference[s:e] for s, e in segments]).double()
+    sig = torch.cat([shifted[s:e] for s, e in segments]).double()
+    corr = float((ref * sig).sum() / (ref.norm() * sig.norm() + 1e-12))
+    return k, corr
+
+
+def _rms(x):
+    return float(x.float().pow(2).mean().sqrt()) if x.numel() else 0.0
+
+
+class TramaRepaintSplice:
+    """Cola no áudio original só o trecho regerado. O resto da música não passa pelo VAE:
+    fica igual ao original, amostra por amostra. O trecho novo é alinhado no tempo e
+    igualado em volume pelo que vem antes e depois, e entra com crossfade nas bordas."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "original": ("AUDIO", {"tooltip": "A música original (a mesma que foi para o VAE Encode Audio)."}),
+                "generated": ("AUDIO", {"tooltip": "A música inteira decodificada depois do KSampler (VAE Decode Audio)."}),
+                "window": ("LATENT", {"tooltip": "Saída latent do nó 'Trecho para regerar (Trama)'."}),
+            }
+        }
+
+    RETURN_TYPES = ("AUDIO", "STRING")
+    RETURN_NAMES = ("audio", "summary")
+    FUNCTION = "splice"
+    CATEGORY = "audio/trama"
+    DESCRIPTION = "Cola o trecho regerado na música original, com crossfade; o resto fica idêntico ao original."
+
+    def splice(self, original, generated, window):
+        import comfy.audio
+
+        a, b, ramp = _window_frames(window)
+        frames = window["samples"].shape[-1]
+        fps = ACE15_FRAMES_PER_SECOND
+        sr = original["sample_rate"]
+        o = original["waveform"].float()  # [B, C, N]
+        g = generated["waveform"].float().to(o.device)
+        if generated["sample_rate"] != sr:
+            g = comfy.audio.resample(g, generated["sample_rate"], sr)
+        if g.shape[1] != o.shape[1]:
+            g = g.mean(dim=1, keepdim=True).expand(-1, o.shape[1], -1)
+        if g.shape[0] != o.shape[0]:
+            g = g[:1].expand(o.shape[0], -1, -1)
+        n = o.shape[-1]
+        g = g[..., :n] if g.shape[-1] >= n else torch.nn.functional.pad(g, (0, n - g.shape[-1]))
+
+        def at(frame):
+            return max(0, min(n, int(round(frame / fps * sr))))
+
+        i0 = at(a)
+        i1 = n if b >= frames else at(b)
+        fade = max(int(round(ramp / fps * sr)), int(0.02 * sr))
+        f0 = max(0, i0 - fade) if i0 > 0 else 0
+        f1 = min(n, i1 + fade) if i1 < n else n
+
+        # O que vem antes e depois do trecho (até 4 s de cada lado) é a mesma música nos
+        # dois áudios: serve para medir o atraso e a diferença de volume do áudio gerado.
+        ctx = int(4 * sr)
+        segments = [(s, e) for s, e in ((max(0, f0 - ctx), f0), (f1, min(n, f1 + ctx))) if e - s >= int(0.5 * sr)]
+        lag, corr, gain = 0, 0.0, 1.0
+        if segments:
+            lag, corr = _best_lag(o[0].mean(dim=0), g[0].mean(dim=0), segments, int(0.05 * sr))
+            if corr < 0.3:  # não parece a mesma música: não confia no atraso medido
+                lag = 0
+            g = _shift(g, lag)
+            ref = _rms(torch.cat([o[..., s:e] for s, e in segments], dim=-1))
+            cur = _rms(torch.cat([g[..., s:e] for s, e in segments], dim=-1))
+            if cur > 1e-6:
+                gain = max(0.25, min(4.0, ref / cur))
+        # Mesmo ponto da música, só a letra muda: o trecho novo fica no volume do original.
+        inner = 1.0
+        cur = _rms(g[..., i0:i1]) * gain
+        if cur > 1e-6:
+            inner = max(0.5, min(2.0, _rms(o[..., i0:i1]) / cur))
+
+        weight = torch.zeros(n, dtype=torch.float32, device=o.device)
+        weight[i0:i1] = 1.0
+        if i0 > f0:
+            weight[f0:i0] = torch.linspace(0, 1, i0 - f0 + 2, device=o.device)[1:-1]
+        if f1 > i1:
+            weight[i1:f1] = torch.linspace(1, 0, f1 - i1 + 2, device=o.device)[1:-1]
+        w = weight[f0:f1]
+        # O ajuste do trecho entra e sai em rampa já dentro do trecho. No crossfade os
+        # dois áudios são a mesma música, então ali vale só o ganho medido fora.
+        level = torch.ones(f1 - f0, dtype=torch.float32, device=o.device)
+        level[i0 - f0:i1 - f0] = inner
+        r = min(fade, (i1 - i0) // 4)
+        if r > 0:
+            level[i0 - f0:i0 - f0 + r] = torch.linspace(1.0, inner, r + 2, device=o.device)[1:-1]
+            level[i1 - f0 - r:i1 - f0] = torch.linspace(inner, 1.0, r + 2, device=o.device)[1:-1]
+        new = g[..., f0:f1] * gain * level
+        if new.numel() and float(new.abs().max()) > 0.999:
+            new = _soft_limit(new)
+        out = o.clone()
+        out[..., f0:f1] = o[..., f0:f1] * (1.0 - w) + new * w
+
+        summary = (f"trecho colado {i0 / sr:.2f}s–{i1 / sr:.2f}s (crossfade {fade / sr:.2f}s), atraso {lag} amostras "
+                   f"(correlação {corr:.2f}), ganho {20 * math.log10(gain):+.1f} dB, ajuste do trecho {20 * math.log10(inner):+.1f} dB")
+        print(f"[TramaRepaintSplice] {summary}")
+        return ({"waveform": out.to(original["waveform"].dtype), "sample_rate": sr}, summary)
 
 
 _NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
@@ -402,5 +696,5 @@ class TramaAnalyzeAudio:
         return {"ui": {"text": [text]}, "result": (text,)}
 
 
-NODE_CLASS_MAPPINGS = {"TramaMatchVolume": TramaMatchVolume, "TramaAnalyzeAudio": TramaAnalyzeAudio, "TramaMixAudio": TramaMixAudio, "TramaAudioWindow": TramaAudioWindow, "TramaTranscribeAudio": TramaTranscribeAudio}
-NODE_DISPLAY_NAME_MAPPINGS = {"TramaMatchVolume": "Igualar volume (Trama)", "TramaAnalyzeAudio": "Analisar áudio (Trama)", "TramaMixAudio": "Juntar áudios (Trama)", "TramaAudioWindow": "Trecho para regerar (Trama)", "TramaTranscribeAudio": "Transcrever voz (Trama)"}
+NODE_CLASS_MAPPINGS = {"TramaMatchVolume": TramaMatchVolume, "TramaAnalyzeAudio": TramaAnalyzeAudio, "TramaMixAudio": TramaMixAudio, "TramaAudioWindow": TramaAudioWindow, "TramaAceRepaint": TramaAceRepaint, "TramaRepaintSplice": TramaRepaintSplice, "TramaTranscribeAudio": TramaTranscribeAudio}
+NODE_DISPLAY_NAME_MAPPINGS = {"TramaMatchVolume": "Igualar volume (Trama)", "TramaAnalyzeAudio": "Analisar áudio (Trama)", "TramaMixAudio": "Juntar áudios (Trama)", "TramaAudioWindow": "Trecho para regerar (Trama)", "TramaAceRepaint": "Repaint do ACE-Step 1.5 (Trama)", "TramaRepaintSplice": "Colar trecho na música (Trama)", "TramaTranscribeAudio": "Transcrever voz (Trama)"}

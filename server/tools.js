@@ -169,7 +169,7 @@ Nas operações de um arquivo só, o resultado vira uma NOVA VERSÃO do mesmo ca
         asset_id: { type: 'string', description: 'Card de áudio ou vídeo' },
         compare_with: { type: 'string', description: 'Outro card de áudio (ex.: a voz de referência) para comparar o tom das vozes' },
         separate: { type: 'boolean', description: 'Separar voz e instrumental antes de medir (padrão true)' },
-        lyrics: { type: 'boolean', description: 'Transcrever a voz com o início e o fim de cada frase (transcript.segments). Use para achar onde uma frase é cantada antes de trocar um trecho da letra.' },
+        lyrics: { type: 'boolean', description: 'Transcrever a voz com o início e o fim de cada frase (transcript.segments) e de cada palavra (words: [início, fim, palavra]). Use para achar onde uma frase é cantada antes de trocar um trecho da letra.' },
         language: { type: 'string', enum: ['auto', 'portuguese', 'english', 'spanish', 'japanese', 'french', 'italian', 'german', 'korean', 'chinese'], description: 'Idioma da letra (ajuda a transcrição)' },
         refresh: { type: 'boolean' },
       },

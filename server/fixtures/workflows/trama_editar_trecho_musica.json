@@ -1,6 +1,6 @@
 {
-  "last_node_id": 14,
-  "last_link_id": 16,
+  "last_node_id": 16,
+  "last_link_id": 22,
   "nodes": [
     {
       "id": 1,
@@ -23,7 +23,8 @@
           "name": "AUDIO",
           "type": "AUDIO",
           "links": [
-            1
+            1,
+            20
           ],
           "slot_index": 0
         }
@@ -138,7 +139,9 @@
           "name": "latent",
           "type": "LATENT",
           "links": [
-            5
+            5,
+            17,
+            21
           ],
           "slot_index": 0
         },
@@ -162,7 +165,6 @@
       "widgets_values": [
         10,
         20,
-        0.85,
         0.4
       ]
     },
@@ -294,7 +296,7 @@
         {
           "name": "clip",
           "type": "CLIP",
-          "link": 8
+          "link": 19
         },
         {
           "name": "seed",
@@ -401,7 +403,7 @@
         {
           "name": "model",
           "type": "MODEL",
-          "link": 7
+          "link": 18
         },
         {
           "name": "positive",
@@ -497,7 +499,7 @@
       "type": "SaveAudioMP3",
       "title": "Salvar música",
       "pos": [
-        1680,
+        2040,
         120
       ],
       "size": [
@@ -511,7 +513,7 @@
         {
           "name": "audio",
           "type": "AUDIO",
-          "link": 16
+          "link": 22
         }
       ],
       "outputs": [],
@@ -544,7 +546,7 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "## Trocar um trecho da letra de uma música (ACE-Step 1.5, repaint)\nRegera **só um trecho de tempo** da música com a letra nova e deixa o resto igual. Ex.: trocar \"me encontra, ou deixa eu te encontrar\" por \"me chama, ou deixa eu te chamar\".\n\n**Campos:**\n- **Trecho a trocar**: start_seconds e end_seconds do pedaço cantado que muda (pegue um pouco antes e depois da frase). strength 0,85 (padrão) mantém a melodia mais perto da original; 1,0 regera livre; 0,6 a 0,7 muda menos a música, mas a letra nova pode não pegar.\n- **Música (estilo e letra)**:\n  - tags: o estilo da música (gênero, instrumentos, tipo de voz, clima), igual ao da original.\n  - lyrics: a **letra inteira** da música, já com a frase trocada, com [verse]/[chorus]. O modelo alinha a letra ao tempo da música toda.\n  - bpm, language, keyscale: os da música original (o bpm errado desalinha a letra).\n  - duration é ligada sozinha à duração da música.\n- **Seed**: troque para tentar outra versão do trecho.\n\n**Limites:** o ACE-Step canta com a voz dele. Em música feita pelo próprio ACE-Step a emenda fica natural; em música de outra pessoa a voz do trecho muda. Para voltar à voz original, separe a voz do trecho e passe pelo trama_trocar_voz com um pedaço da voz original de referência. Sílabas a mais ou a menos que a frase original mudam o ritmo do trecho."
+        "## Trocar um trecho da letra de uma música (ACE-Step 1.5, repaint)\nRegera **só um trecho de tempo** da música com a letra nova e cola esse trecho no áudio original. O resto da música sai igual ao original. Ex.: trocar \"me encontra, ou deixa eu te encontrar\" por \"me chama, ou deixa eu te chamar\".\n\n**Como funciona:**\n- **Repaint**: injection_ratio 0,5 é o padrão do ACE-Step (a música original é reposta fora do trecho na primeira metade dos passos). repaint_instruction troca a instrução do prompt pela de repaint do ACE-Step; nos testes não melhorou, fica desligada.\n- **Colar o trecho na música original**: alinha o trecho novo no tempo, iguala o volume e cola com crossfade. Fora do trecho o áudio não passa pelo modelo.\n\n**Campos:**\n- **Trecho a trocar**: start_seconds e end_seconds do pedaço cantado que muda, de 3 a 90 s. As bordas ficam exatamente entre duas palavras (início da primeira palavra trocada, fim da última): borda no meio de uma palavra embola a frase. O nó Transcrever voz dá o tempo de cada palavra. fade_seconds é o crossfade de cada borda.\n- **Música (estilo e letra)**:\n  - tags: o estilo da música (gênero, instrumentos, tipo de voz, clima), igual ao da original.\n  - lyrics: a **letra inteira** da música, já com a frase trocada, com [verse]/[chorus]. O modelo alinha a letra ao tempo da música toda.\n  - bpm, language, keyscale: os da música original (o bpm errado desalinha a letra).\n  - duration é ligada sozinha à duração da música.\n- **Repaint**: injection_ratio 0,5 é o padrão do ACE-Step (a música original é reposta fora do trecho na primeira metade dos passos). repaint_instruction usa a instrução de repaint do ACE-Step no prompt.\n- **Seed**: troque para tentar outra versão do trecho.\n\n**Limites:** a voz do trecho é gerada pelo ACE-Step a partir do resto da música e pode não ficar idêntica à do cantor. Se mudar, separe a voz do trecho e passe pelo trama_trocar_voz com um pedaço da voz original de referência. Sílabas a mais ou a menos que a frase original mudam o ritmo do trecho."
       ]
     },
     {
@@ -581,6 +583,116 @@
         0,
         "randomize"
       ]
+    },
+    {
+      "id": 15,
+      "type": "TramaAceRepaint",
+      "title": "Repaint (a música original vira contexto)",
+      "pos": [
+        760,
+        240
+      ],
+      "size": [
+        340,
+        150
+      ],
+      "flags": {},
+      "order": 15,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 7
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 8
+        },
+        {
+          "name": "latent",
+          "type": "LATENT",
+          "link": 17
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "links": [
+            18
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "links": [
+            19
+          ],
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "TramaAceRepaint"
+      },
+      "widgets_values": [
+        0.5,
+        false
+      ]
+    },
+    {
+      "id": 16,
+      "type": "TramaRepaintSplice",
+      "title": "Colar o trecho na música original",
+      "pos": [
+        1680,
+        120
+      ],
+      "size": [
+        320,
+        110
+      ],
+      "flags": {},
+      "order": 16,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "original",
+          "type": "AUDIO",
+          "link": 20
+        },
+        {
+          "name": "generated",
+          "type": "AUDIO",
+          "link": 16
+        },
+        {
+          "name": "window",
+          "type": "LATENT",
+          "link": 21
+        }
+      ],
+      "outputs": [
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            22
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "summary",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "TramaRepaintSplice"
+      },
+      "widgets_values": []
     }
   ],
   "links": [
@@ -636,7 +748,7 @@
       7,
       6,
       0,
-      10,
+      15,
       0,
       "MODEL"
     ],
@@ -644,8 +756,8 @@
       8,
       7,
       0,
-      8,
-      0,
+      15,
+      1,
       "CLIP"
     ],
     [
@@ -707,6 +819,54 @@
     [
       16,
       11,
+      0,
+      16,
+      1,
+      "AUDIO"
+    ],
+    [
+      17,
+      4,
+      0,
+      15,
+      2,
+      "LATENT"
+    ],
+    [
+      18,
+      15,
+      0,
+      10,
+      0,
+      "MODEL"
+    ],
+    [
+      19,
+      15,
+      1,
+      8,
+      0,
+      "CLIP"
+    ],
+    [
+      20,
+      1,
+      0,
+      16,
+      0,
+      "AUDIO"
+    ],
+    [
+      21,
+      4,
+      0,
+      16,
+      2,
+      "LATENT"
+    ],
+    [
+      22,
+      16,
       0,
       12,
       0,

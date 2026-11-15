@@ -45,7 +45,7 @@ export function summarize(r) {
     lines.push(r.is_voice_only ? 'Só voz (sem música de fundo relevante).' : r.has_music ? `Tem música junto com a voz (voz ${r.vocals_minus_instruments_db} dB em relação ao instrumental).` : 'Voz com um pouco de som de fundo.');
   }
   if (r.tempo_bpm) lines.push(`Andamento ~${r.tempo_bpm} BPM (ou ${r.tempo_bpm_alt}), tonalidade provável ${r.key}.`);
-  if (r.transcript?.segments?.length) lines.push(`Letra transcrita em ${r.transcript.segments.length} trechos com tempos (transcript.segments).`);
+  if (r.transcript?.segments?.length) lines.push(`Letra transcrita em ${r.transcript.segments.length} trechos com tempos (transcript.segments${r.transcript.segments.some((s) => s.words?.length) ? ', com o tempo de cada palavra em words' : ''}).`);
   if (r.median_hz) {
     lines.push(`Voz: tom mediano ${r.median_hz} Hz (${r.median_note}), região ${r.voice_register}, faixa de ${r.range_notes?.[0]} a ${r.range_notes?.[1]}${r.looks_like ? `, parece ${r.looks_like}` : ''}; ${r.voice_seconds} s com voz.`);
   } else if (r.voice_seconds === 0) {
