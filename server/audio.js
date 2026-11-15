@@ -54,6 +54,104 @@ export function summarize(r) {
   return lines.join(' ');
 }
 
+const normalize = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+
+function editDistance(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
+// Palavras da transcrição em ordem, com a frase (segmento) de cada uma.
+function sungWords(transcript) {
+  return (transcript?.segments || []).flatMap((s, segment) =>
+    (s.words || []).map(([start, end, text]) => ({ start, end, text, key: normalize(text), segment })).filter((w) => w.key));
+}
+
+// Onde a frase aparece na lista de palavras: [{ i, len, score }] em ordem de tempo.
+function locatePhrase(words, phrase, minScore) {
+  const target = normalize(phrase);
+  if (!target || !words.length) return [];
+  const size = target.split(' ').length;
+  const found = [];
+  for (let i = 0; i < words.length; i++) {
+    for (const len of [size - 1, size, size + 1]) {
+      if (len < 1 || i + len > words.length) continue;
+      const text = words.slice(i, i + len).map((w) => w.key).join(' ');
+      const score = 1 - editDistance(text, target) / Math.max(text.length, target.length);
+      if (score >= minScore) found.push({ i, len, score });
+    }
+  }
+  // Janelas que se sobrepõem: fica a mais parecida com a frase.
+  found.sort((a, b) => b.score - a.score);
+  const kept = [];
+  for (const f of found) if (!kept.some((k) => f.i < k.i + k.len && k.i < f.i + f.len)) kept.push(f);
+  return kept.sort((a, b) => a.i - b.i);
+}
+
+/**
+ * Acha onde uma frase é cantada, pelas palavras da transcrição (segments[].words =
+ * [início, fim, palavra]). A frase pode atravessar duas frases da transcrição e vir
+ * escrita um pouco diferente ("deixe" por "deixa"), então a comparação é aproximada.
+ * Devolve cada ocorrência com o trecho pronto para o repaint: começa 0,05 s antes da
+ * primeira palavra, termina no fim da última e tem pelo menos minSeconds (o ACE-Step
+ * regera de 3 a 90 s), incluindo palavras vizinhas quando a frase é mais curta.
+ */
+export function findPhrase(transcript, phrase, { minScore = 0.72, minSeconds = 3 } = {}) {
+  const words = sungWords(transcript);
+  return locatePhrase(words, phrase, minScore).map(({ i, len, score }, n) => {
+    let a = i;
+    let b = i + len - 1;
+    while (words[b].end - words[a].start < minSeconds && (a > 0 || b < words.length - 1)) {
+      if (a > 0) a -= 1;
+      else b += 1;
+    }
+    const match = {
+      occurrence: n + 1,
+      start_seconds: round2(Math.max(0, words[a].start - 0.05)),
+      end_seconds: round2(words[b].end),
+      sung: words.slice(i, i + len).map((w) => w.text).join(' '),
+      score: round2(score),
+    };
+    if (a < i || b > i + len - 1) match.window_text = words.slice(a, b + 1).map((w) => w.text).join(' ');
+    return match;
+  });
+}
+
+/**
+ * Letra para trocar uma ocorrência da frase: a música inteira como é cantada (uma frase
+ * da transcrição por linha), com só essa ocorrência trocada. As outras repetições ficam
+ * como estão no áudio: com a frase nova em todas, o modelo copia o refrão que ouve no
+ * resto da música e a letra nova não entra.
+ */
+export function swapLyrics(transcript, phrase, replacement, occurrence = 1, { minScore = 0.72 } = {}) {
+  const words = sungWords(transcript);
+  const hit = locatePhrase(words, phrase, minScore)[occurrence - 1];
+  const text = String(replacement || '').trim();
+  if (!hit || !text) return null;
+  // Por frase da transcrição: uma lista de linhas, cada linha uma lista de palavras.
+  // A frase nova vai numa linha só dela: nos testes entrou inteira mais vezes assim
+  // do que no meio de uma linha.
+  const lines = (transcript.segments || []).map((s) => [s.words?.length ? [] : [String(s.text || '').trim()]]);
+  words.forEach((w, k) => {
+    const segment = lines[w.segment];
+    if (k === hit.i) {
+      // Mantém a vírgula ou o ponto que fechava a frase original.
+      const closing = /[,.;!?]$/.test(text) ? '' : words[hit.i + hit.len - 1].text.match(/[,.;!?]+$/)?.[0] || '';
+      segment.push([text + closing], []);
+    } else if (k < hit.i || k >= hit.i + hit.len) {
+      segment[segment.length - 1].push(w.text);
+    }
+  });
+  return lines.flat().map((l) => l.join(' ')).filter(Boolean).join('\n');
+}
+
 /**
  * Mede o áudio de um card (áudio ou vídeo).
  * @returns {Promise<object>} relatório + summary

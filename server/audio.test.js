@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analysisPrompt, parseReport, summarize, suggestPitchShift } from './audio.js';
+import { analysisPrompt, parseReport, summarize, suggestPitchShift, findPhrase, swapLyrics } from './audio.js';
 
 test('tom da troca de voz: só 0 ou uma oitava inteira', () => {
   // Me Encontra (G3, 195 Hz) com a voz do WhatsApp (F#3, 189 Hz): mesma região
@@ -47,4 +47,43 @@ test('com lyrics: transcreve a voz separada e junta a letra ao relatório', () =
   assert.deepEqual(r.transcript, transcript);
   assert.match(summarize(r), /117 BPM \(ou 58\).*D# major/);
   assert.match(summarize(r), /1 trechos com tempos/);
+});
+
+// Transcrição real do primeiro refrão de uma música: a frase atravessa duas frases da
+// transcrição e o Whisper escreve "deixe" onde se canta "deixa".
+const chorus = {
+  segments: [
+    { start: 50.38, end: 55.76, text: 'Felicidade, amor, então me encontra', words: [[50.38, 52.12, 'Felicidade,'], [52.12, 52.8, 'amor,'], [52.8, 53.2, 'então'], [53.2, 53.58, 'me'], [53.58, 55.76, 'encontra']] },
+    { start: 55.98, end: 65.1, text: 'Ou deixe eu te encontrar, me encontra Ou deixe eu te encontrar, me encontra', words: [[55.98, 56.36, 'Ou'], [56.36, 56.86, 'deixe'], [56.86, 57.0, 'eu'], [57.0, 57.22, 'te'], [57.22, 58.8, 'encontrar,'], [58.8, 59.0, 'me'], [59.0, 59.7, 'encontra'], [61.32, 61.8, 'Ou'], [61.8, 62.18, 'deixe'], [62.18, 62.44, 'eu'], [62.44, 62.6, 'te'], [62.6, 64.06, 'encontrar,'], [64.06, 64.32, 'me'], [64.32, 65.1, 'encontra']] },
+  ],
+};
+
+test('findPhrase: acha cada ocorrência com a borda entre palavras', () => {
+  const found = findPhrase(chorus, 'me encontra, ou deixa eu te encontrar');
+  assert.deepEqual(found.map((m) => [m.start_seconds, m.end_seconds]), [[53.15, 58.8], [58.75, 64.06]]);
+  assert.equal(found[0].sung, 'me encontra Ou deixe eu te encontrar,');
+  assert.equal(found[0].window_text, undefined);
+});
+
+test('findPhrase: frase curta ganha palavras vizinhas até 3 s; frase ausente não casa', () => {
+  const [short] = findPhrase(chorus, 'amor, então');
+  assert.equal(short.sung, 'amor, então');
+  assert.ok(short.end_seconds - short.start_seconds >= 3);
+  assert.equal(short.window_text, 'Felicidade, amor, então me'); // 50,38 a 53,20 dá 2,82 s: entra mais uma palavra
+  assert.deepEqual(findPhrase(chorus, 'completamente outra coisa aqui'), []);
+  assert.deepEqual(findPhrase({ segments: [{ start: 0, end: 5, text: 'sem palavras' }] }, 'sem palavras'), []);
+});
+
+test('swapLyrics: a letra inteira como é cantada, com só a ocorrência escolhida trocada', () => {
+  const phrase = 'me encontra, ou deixa eu te encontrar';
+  assert.equal(
+    swapLyrics(chorus, phrase, 'me chama, ou deixa eu te chamar', 1),
+    'Felicidade, amor, então\nme chama, ou deixa eu te chamar,\nme encontra Ou deixe eu te encontrar, me encontra',
+  );
+  assert.equal(
+    swapLyrics(chorus, phrase, 'me chama, ou deixa eu te chamar', 2),
+    'Felicidade, amor, então me encontra\nOu deixe eu te encontrar,\nme chama, ou deixa eu te chamar,\nme encontra',
+  );
+  assert.equal(swapLyrics(chorus, phrase, 'me chama', 9), null);
+  assert.equal(findPhrase(chorus, phrase)[1].occurrence, 2);
 });

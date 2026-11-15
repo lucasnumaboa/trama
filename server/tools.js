@@ -9,7 +9,7 @@ import { readImage, readVideo, readPeople, findPerson, describeCharacter, vision
 import { reviewGeneration } from './review.js';
 import { getSettings } from './settings.js';
 import { meshStats } from './model3d.js';
-import { analyzeAudio, suggestPitchShift } from './audio.js';
+import { analyzeAudio, suggestPitchShift, findPhrase, swapLyrics } from './audio.js';
 import { listCapabilities } from './capabilities.js';
 import { swapVideo, planChunks, matchPerson, DEFAULT_CHUNK, MAX_CHUNK, SWAP_WORKFLOW } from './swap.js';
 import { castOf, findCharacter, upsertCharacter, removeCharacter, mentionedCharacters, placeCharacters } from './cast.js';
@@ -171,6 +171,9 @@ Nas operações de um arquivo só, o resultado vira uma NOVA VERSÃO do mesmo ca
         separate: { type: 'boolean', description: 'Separar voz e instrumental antes de medir (padrão true)' },
         lyrics: { type: 'boolean', description: 'Transcrever a voz com o início e o fim de cada frase (transcript.segments) e de cada palavra (words: [início, fim, palavra]). Use para achar onde uma frase é cantada antes de trocar um trecho da letra.' },
         language: { type: 'string', enum: ['auto', 'portuguese', 'english', 'spanish', 'japanese', 'french', 'italian', 'german', 'korean', 'chinese'], description: 'Idioma da letra (ajuda a transcrição)' },
+        find: { type: 'string', description: 'Frase a localizar na letra cantada (ex.: a frase que o usuário quer trocar). Liga lyrics sozinho e devolve phrase_matches: cada ocorrência com start_seconds e end_seconds prontos para o trama_editar_trecho_musica (borda entre palavras, mínimo de 3 s), occurrence (o número dela) e sung, o texto como foi transcrito.' },
+        replace_with: { type: 'string', description: 'Com find: a frase nova que entra no lugar. Devolve swap, com start_seconds, end_seconds e lyrics (a letra inteira como é cantada, com só a ocorrência escolhida trocada), prontos para o trama_editar_trecho_musica.' },
+        occurrence: { type: 'integer', description: 'Com replace_with: qual ocorrência de phrase_matches trocar (1 = a primeira; padrão 1).' },
         refresh: { type: 'boolean' },
       },
       required: ['asset_id'],
@@ -352,9 +355,11 @@ function workflowSummary(d) {
   };
 }
 
-// Campo de duração do resultado (segundos), quando o workflow tem um.
+// Campo de duração do resultado (segundos), quando o workflow tem um. Início, fim e
+// crossfade de um trecho (start_seconds, end_seconds, fade_seconds) são posições no
+// tempo, não a duração do resultado.
 export function durationField(d) {
-  return d.fields.find((f) => f.kind === 'number' && /dura[cç][aã]o|duration|seconds?|segundos/i.test(`${f.label} ${f.nodeTitle} ${f.input}`));
+  return d.fields.find((f) => f.kind === 'number' && !/^(start|end|fade)_/i.test(f.input) && /dura[cç][aã]o|duration|seconds?|segundos/i.test(`${f.label} ${f.nodeTitle} ${f.input}`));
 }
 
 // O campo de texto principal: o prompt positivo (não o negativo nem um prompt de sistema).
@@ -1080,16 +1085,37 @@ export async function runTool(name, args, ctx) {
         if (a.status === 'generating') throw new Error(`"${a.title}" ainda está gerando.`);
         const separate = args.separate !== false;
         // Medida guardada no card, por versão do arquivo e modo (com ou sem separação).
-        const key = `${a.file.subfolder || ''}/${a.file.filename}|${separate}|${args.lyrics ? args.language || 'auto' : ''}`;
+        const lyrics = Boolean(args.lyrics || args.find);
+        const key = `${a.file.subfolder || ''}/${a.file.filename}|${separate}|${lyrics ? args.language || 'auto' : ''}`;
         if (a.audioInfo?.key === key && !args.refresh) return { a, report: a.audioInfo.report, cached: true };
         ctx.step({ label: `Ouvindo "${a.title}"`, assetIds: [a.id] });
-        const report = await analyzeAudio(a, { separate, lyrics: Boolean(args.lyrics), language: args.language || 'auto', signal: ctx.signal });
+        const report = await analyzeAudio(a, { separate, lyrics, language: args.language || 'auto', signal: ctx.signal });
         updateAsset(p, a.id, { audioInfo: { key, report } }, { persist: true });
         return { a, report };
       };
       const first = await measure(args.asset_id);
       const result = { asset_id: first.a.id, title: first.a.title, ...first.report };
       let label = `Ouviu "${first.a.title}"`;
+      if (args.find) {
+        // As ocorrências já vêm com os tempos certos: o agente não precisa (nem deve) fazer
+        // a conta com a lista de palavras, que é longa e fácil de ler errado.
+        const transcript = first.report.transcript;
+        if (transcript?.segments?.length && !transcript.segments.some((s) => s.words?.length)) {
+          throw new Error('Essa transcrição é antiga e não tem o tempo de cada palavra: chame de novo com refresh: true (e confira se o ComfyUI-Trama instalado no ComfyUI é o atual).');
+        }
+        result.phrase_matches = findPhrase(transcript, args.find);
+        if (transcript) result.transcript = { ...transcript, segments: transcript.segments.map(({ words, ...segment }) => segment) };
+        if (!result.phrase_matches.length) result.phrase_hint = 'Não achei essa frase na transcrição. A transcrição de canto erra palavras: veja em transcript.segments como a frase foi escrita e chame de novo com find nesse texto.';
+        if (args.replace_with && result.phrase_matches.length) {
+          const n = Math.max(1, Math.round(Number(args.occurrence) || 1));
+          const match = result.phrase_matches[n - 1];
+          if (!match) throw new Error(`Não existe a ocorrência ${n} dessa frase: achei ${result.phrase_matches.length}.`);
+          // A letra sai montada: o modelo de linguagem, escrevendo a letra, troca a frase em
+          // todas as repetições, e aí o ACE-Step copia o refrão antigo e a troca não entra.
+          result.swap = { occurrence: n, start_seconds: match.start_seconds, end_seconds: match.end_seconds, lyrics: swapLyrics(transcript, args.find, args.replace_with, n) };
+          delete result.transcript;
+        }
+      }
       if (args.compare_with) {
         const second = await measure(args.compare_with);
         result.compare = { asset_id: second.a.id, title: second.a.title, ...second.report };
