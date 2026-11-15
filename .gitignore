@@ -5,3 +5,4 @@ data/*
 installer/output/
 .progress/
 *.log
+__pycache__/
