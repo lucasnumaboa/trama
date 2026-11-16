@@ -5,7 +5,7 @@ import { convertWorkflow, findInputSpec, comboOptions, isWidgetSpec } from './co
 const MEDIA_FLAGS = { image_upload: 'image', video_upload: 'video', audio_upload: 'audio' };
 // Nós de terceiros que carregam um modelo 3D de uma lista de arquivos (sem botão de upload):
 // o campo vira um slot de mídia do tipo modelo 3D, e o Trama põe o arquivo na pasta input.
-const MESH_LOADERS = { UniRigLoadMesh: 'file_path', TramaLoadMesh: 'mesh', TramaAnimate3D: 'model' };
+const MESH_LOADERS = { UniRigLoadMesh: 'file_path', TramaLoadMesh: 'mesh', TramaAnimate3D: 'model', TramaMotionToModel: 'model' };
 const MODEL_FILE = /\.(safetensors|ckpt|pt|pth|bin|gguf|sft|onnx)$/i;
 const IMPORTANT = new Set([
   'width', 'height', 'length', 'steps', 'cfg', 'denoise', 'batch_size', 'duration', 'seconds',

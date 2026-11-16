@@ -44,6 +44,18 @@ test('seed with control_after_generate skips the "randomize" value', () => {
   assert.deepEqual(mapWidgetValues(objectInfo.RandomNoise, [42, 'randomize']), { noise_seed: 42 });
 });
 
+test('seed named "seed" without the option still skips a saved control value', () => {
+  const def = {
+    input: {
+      required: { duration: ['FLOAT', { default: 3 }], seed: ['INT', { default: 42 }] },
+      optional: { cfg_scale: ['FLOAT', { default: 5 }], num_samples: ['INT', { default: 1 }] },
+    },
+    input_order: { required: ['duration', 'seed'], optional: ['cfg_scale', 'num_samples'] },
+  };
+  assert.deepEqual(mapWidgetValues(def, [4, 1234, 'randomize', 5, 1]), { duration: 4, seed: 1234, cfg_scale: 5, num_samples: 1 });
+  assert.deepEqual(mapWidgetValues(def, [4, 1234, 5, 1]), { duration: 4, seed: 1234, cfg_scale: 5, num_samples: 1 });
+});
+
 test('missing advanced widgets fall back to the node defaults', () => {
   const v = mapWidgetValues(objectInfo.LTXVEmptyLatentAudio, [97, 25, 1]);
   assert.deepEqual([v.frames_number, v.frame_rate, v.batch_size], [97, 25, 1]);

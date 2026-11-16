@@ -1,0 +1,256 @@
+{
+  "id": "4f7c2a90-6b1e-4d3a-9e52-8a1c3b7d5e14",
+  "revision": 0,
+  "last_node_id": 10,
+  "last_link_id": 4,
+  "nodes": [
+    {
+      "id": 10,
+      "type": "MarkdownNote",
+      "pos": [
+        -760,
+        -60
+      ],
+      "size": [
+        560,
+        520
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Como usar",
+      "properties": {},
+      "widgets_values": [
+        "## Modelo 3D com esqueleto → movimento por texto — HY-Motion\nRecebe **um modelo 3D com esqueleto humanoide** (saída do workflow de esqueleto com o template `mixamo`) e um **texto em inglês** descrevendo o movimento, e devolve o modelo **animado**: soco, chute, dança, cambalhota, acenar, sentar, lutar, qualquer movimento de corpo humano. Sai em GLB (o card toca a animação) e FBX (Exportar: Unity, Unreal, Blender).\n- **text**: o movimento em inglês, numa frase simples e física (ex.: `A person throws a right punch forward, then returns to a fighting stance.`).\n- **duration**: segundos (0,5 a 12). **seed**: troque para outra versão do mesmo movimento.\n- O personagem pode sair do lugar (anda, rola). Para andar e correr em loop no lugar, use o workflow Animar modelo 3D (trama_3d_animar).\n- Só anima esqueleto humanoide (mixamo). Bicho ou monstro dá erro.\n- Leva de 30 s a 1 min na 3090. Precisa dos nós ComfyUI-HY-Motion1, ComfyUI-Trama e ComfyUI-UniRig (o Blender dele, para o FBX), e dos modelos HY-Motion-1.0, Qwen3-8B-bnb-4bit e clip-vit-large-patch14 em models/HY-Motion/ckpts."
+      ]
+    },
+    {
+      "id": 1,
+      "type": "HYMotionLoadLLM",
+      "pos": [
+        -160,
+        -40
+      ],
+      "size": [
+        320,
+        110
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "llm",
+          "type": "HYMOTION_LLM",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "title": "Codificador de texto (Qwen3-8B)",
+      "properties": {
+        "Node name for S&R": "HYMotionLoadLLM"
+      },
+      "widgets_values": [
+        "Qwen3-8B-bnb-4bit",
+        "bnb-4bit",
+        false
+      ]
+    },
+    {
+      "id": 2,
+      "type": "HYMotionLoadNetwork",
+      "pos": [
+        -160,
+        120
+      ],
+      "size": [
+        320,
+        60
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "network",
+          "type": "HYMOTION_NET",
+          "links": [
+            2
+          ]
+        }
+      ],
+      "title": "Modelo de movimento (HY-Motion 1.0)",
+      "properties": {
+        "Node name for S&R": "HYMotionLoadNetwork"
+      },
+      "widgets_values": [
+        "HY-Motion-1.0"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "HYMotionEncodeText",
+      "pos": [
+        200,
+        -40
+      ],
+      "size": [
+        400,
+        140
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "llm",
+          "type": "HYMOTION_LLM",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "conditioning",
+          "type": "HYMOTION_COND",
+          "links": [
+            3
+          ]
+        }
+      ],
+      "title": "Movimento (texto em inglês)",
+      "properties": {
+        "Node name for S&R": "HYMotionEncodeText"
+      },
+      "widgets_values": [
+        "A person throws a right punch forward, then returns to a fighting stance."
+      ]
+    },
+    {
+      "id": 4,
+      "type": "HYMotionGenerate",
+      "pos": [
+        640,
+        -40
+      ],
+      "size": [
+        320,
+        170
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "network",
+          "type": "HYMOTION_NET",
+          "link": 2
+        },
+        {
+          "name": "conditioning",
+          "type": "HYMOTION_COND",
+          "link": 3
+        }
+      ],
+      "outputs": [
+        {
+          "name": "motion_data",
+          "type": "HYMOTION_DATA",
+          "links": [
+            4
+          ]
+        }
+      ],
+      "title": "Gerar movimento",
+      "properties": {
+        "Node name for S&R": "HYMotionGenerate"
+      },
+      "widgets_values": [
+        4.0,
+        1234,
+        "randomize",
+        5.0,
+        1
+      ]
+    },
+    {
+      "id": 5,
+      "type": "TramaMotionToModel",
+      "pos": [
+        1000,
+        -40
+      ],
+      "size": [
+        360,
+        110
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "motion_data",
+          "type": "HYMOTION_DATA",
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "name": "glb_path",
+          "type": "STRING",
+          "links": []
+        }
+      ],
+      "title": "Movimento no modelo 3D",
+      "properties": {
+        "Node name for S&R": "TramaMotionToModel"
+      },
+      "widgets_values": [
+        "3d/modelo_com_esqueleto.glb",
+        "trama/trama_3d_movimento"
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      3,
+      0,
+      "HYMOTION_LLM"
+    ],
+    [
+      2,
+      2,
+      0,
+      4,
+      0,
+      "HYMOTION_NET"
+    ],
+    [
+      3,
+      3,
+      0,
+      4,
+      1,
+      "HYMOTION_COND"
+    ],
+    [
+      4,
+      4,
+      0,
+      5,
+      0,
+      "HYMOTION_DATA"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

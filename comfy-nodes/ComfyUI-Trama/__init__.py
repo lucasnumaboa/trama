@@ -1139,6 +1139,83 @@ class TramaAnimate3D:
         return {"ui": {"3d": files, "text": [info]}, "result": (os.path.relpath(glb, out_dir),)}
 
 
+_GLB_TO_FBX_SCRIPT = r'''
+import sys, bpy
+src, dst = sys.argv[-2:]
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.import_scene.gltf(filepath=src)
+if not any(o.type == "ARMATURE" for o in bpy.data.objects):
+    print("TRAMA_ERROR o GLB animado veio sem esqueleto")
+    sys.exit(2)
+bpy.ops.export_scene.fbx(filepath=dst, bake_anim=True, add_leaf_bones=False, path_mode="COPY", embed_textures=True)
+print("TRAMA_FBX ok")
+'''
+
+
+class TramaMotionToModel:
+    """Põe um movimento do HY-Motion (texto → movimento) no modelo 3D com esqueleto.
+
+    Usa o retarget do ComfyUI-HY-Motion1 (nó HY-Motion Export GLB) no GLB com esqueleto
+    mixamo do workflow de esqueleto. O GLB animado vira o card; o FBX fica ao lado, com
+    o mesmo nome, para o Exportar.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "motion_data": ("HYMOTION_DATA",),
+                "model": ("STRING", {"default": "3d/modelo_com_esqueleto.glb",
+                                     "tooltip": "GLB com esqueleto mixamo (saída do workflow de esqueleto), dentro da pasta input."}),
+                "filename_prefix": ("STRING", {"default": "trama/trama_3d_movimento"}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("glb_path",)
+    FUNCTION = "apply"
+    OUTPUT_NODE = True
+    CATEGORY = "Trama"
+
+    def apply(self, motion_data, model, filename_prefix):
+        import os
+        import shutil
+        import folder_paths
+        import nodes
+
+        export_cls = nodes.NODE_CLASS_MAPPINGS.get("HYMotionExportGLB")
+        if export_cls is None:
+            raise RuntimeError("Falta o nó ComfyUI-HY-Motion1 (HY-Motion Export GLB) no ComfyUI.")
+        src = os.path.abspath(os.path.join(folder_paths.get_input_directory(), model))
+        if not os.path.exists(src):
+            raise RuntimeError(f"Modelo não encontrado: {model}")
+        out_dir = folder_paths.get_output_directory()
+        tmp_rel = os.path.join("trama", "_hymotion_tmp")
+        res = export_cls().export(motion_data, src, tmp_rel, "movimento", 0.0, 0.0)
+        made = [os.path.join(out_dir, p) for p in str(res[0]).splitlines() if p.strip().endswith(".glb")]
+        made = [p for p in made if os.path.exists(p)]
+        if not made:
+            raise RuntimeError(f"O HY-Motion não pôs o movimento no modelo ({res[0]}). O modelo precisa de esqueleto mixamo (workflow de esqueleto com template mixamo).")
+
+        full_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(filename_prefix, out_dir)
+        os.makedirs(full_folder, exist_ok=True)
+        stem = f"{filename}_{counter:05}_"
+        glb = os.path.join(full_folder, stem + ".glb")
+        fbx = os.path.join(full_folder, stem + ".fbx")
+        shutil.move(made[0], glb)
+        for p in made:
+            for extra in (p, p[:-4] + ".txt"):
+                if os.path.exists(extra):
+                    os.remove(extra)
+        try:
+            _run_blender(_GLB_TO_FBX_SCRIPT, [glb, fbx])
+        except Exception as e:  # o card sai mesmo sem o FBX
+            print(f"[Trama] FBX do movimento não saiu: {e}")
+        print(f"[Trama] movimento: {glb}")
+        files = [{"filename": os.path.basename(glb), "subfolder": subfolder, "type": "output"}]
+        return {"ui": {"3d": files, "text": [motion_data.text]}, "result": (os.path.relpath(glb, out_dir),)}
+
+
 class TramaImageStyle:
     """Diz se a imagem é um desenho chapado em preto e branco (traço, cartum sem sombra).
 
@@ -1324,5 +1401,5 @@ class TramaLimitMetallic:
         return (metallic.clamp(max=float(limit)),)
 
 
-NODE_CLASS_MAPPINGS = {"TramaMatchVolume": TramaMatchVolume, "TramaAnalyzeAudio": TramaAnalyzeAudio, "TramaMixAudio": TramaMixAudio, "TramaAudioWindow": TramaAudioWindow, "TramaAceRepaint": TramaAceRepaint, "TramaRepaintSplice": TramaRepaintSplice, "TramaTranscribeAudio": TramaTranscribeAudio, "TramaLoadMesh": TramaLoadMesh, "TramaRiggedToGlb": TramaRiggedToGlb, "TramaContrastBackground": TramaContrastBackground, "TramaLimitMetallic": TramaLimitMetallic, "TramaImageStyle": TramaImageStyle, "TramaAnimate3D": TramaAnimate3D, "TramaMatchColor": TramaMatchColor}
-NODE_DISPLAY_NAME_MAPPINGS = {"TramaMatchVolume": "Igualar volume (Trama)", "TramaAnalyzeAudio": "Analisar áudio (Trama)", "TramaMixAudio": "Juntar áudios (Trama)", "TramaAudioWindow": "Trecho para regerar (Trama)", "TramaAceRepaint": "Repaint do ACE-Step 1.5 (Trama)", "TramaRepaintSplice": "Colar trecho na música (Trama)", "TramaTranscribeAudio": "Transcrever voz (Trama)", "TramaLoadMesh": "Carregar modelo 3D (Trama)", "TramaRiggedToGlb": "Esqueleto: FBX para GLB (Trama)", "TramaContrastBackground": "Fundo com contraste para 3D (Trama)", "TramaLimitMetallic": "Limitar metal (Trama)", "TramaImageStyle": "Desenho chapado? (Trama)", "TramaAnimate3D": "Animar modelo 3D (Trama)", "TramaMatchColor": "Cor da textura igual à origem (Trama)"}
+NODE_CLASS_MAPPINGS = {"TramaMatchVolume": TramaMatchVolume, "TramaAnalyzeAudio": TramaAnalyzeAudio, "TramaMixAudio": TramaMixAudio, "TramaAudioWindow": TramaAudioWindow, "TramaAceRepaint": TramaAceRepaint, "TramaRepaintSplice": TramaRepaintSplice, "TramaTranscribeAudio": TramaTranscribeAudio, "TramaLoadMesh": TramaLoadMesh, "TramaRiggedToGlb": TramaRiggedToGlb, "TramaContrastBackground": TramaContrastBackground, "TramaLimitMetallic": TramaLimitMetallic, "TramaImageStyle": TramaImageStyle, "TramaAnimate3D": TramaAnimate3D, "TramaMatchColor": TramaMatchColor, "TramaMotionToModel": TramaMotionToModel}
+NODE_DISPLAY_NAME_MAPPINGS = {"TramaMatchVolume": "Igualar volume (Trama)", "TramaAnalyzeAudio": "Analisar áudio (Trama)", "TramaMixAudio": "Juntar áudios (Trama)", "TramaAudioWindow": "Trecho para regerar (Trama)", "TramaAceRepaint": "Repaint do ACE-Step 1.5 (Trama)", "TramaRepaintSplice": "Colar trecho na música (Trama)", "TramaTranscribeAudio": "Transcrever voz (Trama)", "TramaLoadMesh": "Carregar modelo 3D (Trama)", "TramaRiggedToGlb": "Esqueleto: FBX para GLB (Trama)", "TramaContrastBackground": "Fundo com contraste para 3D (Trama)", "TramaLimitMetallic": "Limitar metal (Trama)", "TramaImageStyle": "Desenho chapado? (Trama)", "TramaAnimate3D": "Animar modelo 3D (Trama)", "TramaMatchColor": "Cor da textura igual à origem (Trama)", "TramaMotionToModel": "Movimento no modelo 3D (Trama)"}

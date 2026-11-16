@@ -27,6 +27,7 @@ function normLink(l) {
 
 const DYNAMIC_COMBO = 'COMFY_DYNAMICCOMBO_V3';
 const UPLOAD_PLACEHOLDERS = new Set(['image', 'video', 'audio', 'upload']);
+const SEED_CONTROLS = new Set(['fixed', 'increment', 'decrement', 'randomize']);
 
 /** Entradas de um bloco {required, optional} na ordem declarada. */
 function orderedSpecs(inputs, order) {
@@ -105,7 +106,9 @@ export function mapWidgetValues(def, widgetsValues, nodeType) {
         if (option) consume(orderedSpecs(option.inputs), `${key}.`);
         continue;
       }
-      if (opts.control_after_generate) i += 1;
+      // O frontend também põe o controle em INT chamado seed sem a opção na definição
+      // (ex.: HY-Motion Generate): pula quando o valor salvo seguinte é um controle.
+      if (opts.control_after_generate || (type === 'INT' && /(^|_)seed$/.test(name) && SEED_CONTROLS.has(widgetsValues[i]))) i += 1;
       // O botão de upload às vezes é salvo como um valor extra ("image").
       if (UPLOAD_FLAGS.some((f) => opts[f]) && UPLOAD_PLACEHOLDERS.has(widgetsValues[i])) i += 1;
     }

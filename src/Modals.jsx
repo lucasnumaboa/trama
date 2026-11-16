@@ -78,7 +78,7 @@ export function PreviewModal({ asset, onClose, onSaveText, onVersion, onFix3d, a
               <>
                 {asset.kind === 'model3d' && /\.glb$/i.test(asset.file.filename) ? (
                   <Suspense fallback={null}>
-                    <ExportMenu file={asset.file} title={asset.title} rigged={/3d_(rig|animar)/i.test(asset.workflow || asset.recipe?.workflow || '')} />
+                    <ExportMenu file={asset.file} title={asset.title} rigged={/3d_(rig|animar|movimento)/i.test(asset.workflow || asset.recipe?.workflow || '')} />
                   </Suspense>
                 ) : (
                   <button className="btn" onClick={() => downloadFile(asset.file)}>
