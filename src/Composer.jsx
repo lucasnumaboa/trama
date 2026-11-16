@@ -107,6 +107,13 @@ const Composer = forwardRef(function Composer(
   const [uploading, setUploading] = useState(0);
   const [picker, setPicker] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  // Ctrl+A no chat marca também os anexos; Delete/Backspace então tira todos de uma vez.
+  const [allMarked, setAllMarkedState] = useState(false);
+  const allMarkedRef = useRef(false); // a tecla seguinte pode chegar antes de a tela redesenhar
+  const setAllMarked = (v) => {
+    allMarkedRef.current = v;
+    setAllMarkedState(v);
+  };
   const assets = project?.assets || [];
   const attached = attachments.map((id) => assets.find((a) => a.id === id)).filter(Boolean);
 
@@ -245,15 +252,57 @@ const Composer = forwardRef(function Composer(
     setEmpty(!serialize(editor.current));
   }
 
+  function removeAllAttachments() {
+    setAttachments([]);
+    editor.current?.querySelectorAll('[data-asset]').forEach((n) => n.remove());
+    setAllMarked(false);
+    setEmpty(!serialize(editor.current));
+  }
+
+  function onComposerKeyDown(e) {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'a') {
+      if (!attached.length) return;
+      // Marca o texto da caixa (não a página inteira) e os anexos.
+      e.preventDefault();
+      const el = editor.current;
+      if (el && serialize(el)) {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      setAllMarked(true);
+      return;
+    }
+    if (!allMarkedRef.current) return;
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      // O texto marcado junto é apagado pelo próprio navegador.
+      const sel = window.getSelection();
+      const textMarked = sel && !sel.isCollapsed && editor.current?.contains(sel.anchorNode);
+      if (!textMarked) e.preventDefault();
+      removeAllAttachments();
+    } else if (!['Control', 'Meta', 'Shift', 'Alt'].includes(e.key)) {
+      setAllMarked(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!attached.length) setAllMarked(false);
+  }, [attached.length]);
+
   useEffect(() => {
     // Ao trocar de projeto, limpa o texto.
     if (editor.current) editor.current.innerHTML = '';
     setEmpty(true);
+    setAllMarked(false);
   }, [project?.id]);
 
   return (
     <div
       className={`composer ${dragOver ? 'drag-over' : ''}`}
+      onKeyDown={onComposerKeyDown}
+      onMouseDown={() => allMarked && setAllMarked(false)}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes('Files')) {
           e.preventDefault();
@@ -270,7 +319,7 @@ const Composer = forwardRef(function Composer(
       }}
     >
       {(attached.length > 0 || uploading > 0) && (
-        <div className="attach-row">
+        <div className={`attach-row ${allMarked ? 'all-marked' : ''}`}>
           {attached.map((a) => (
             <div key={a.id} className="attach" title={`Clique para citar "${a.title}" no texto`}>
               <button className="attach-thumb" onMouseDown={(e) => e.preventDefault()} onClick={() => insertReference(a)}>
@@ -294,6 +343,11 @@ const Composer = forwardRef(function Composer(
           )}
         </div>
       )}
+      {allMarked && attached.length > 0 && (
+        <div className="attach-marked-hint">
+          {attached.length === 1 ? '1 anexo marcado' : `${attached.length} anexos marcados`}: Delete ou Backspace remove {attached.length === 1 ? 'o anexo' : 'todos'}
+        </div>
+      )}
 
       <div className="editor-wrap">
         {empty && (
@@ -309,6 +363,7 @@ const Composer = forwardRef(function Composer(
           contentEditable={Boolean(project)}
           suppressContentEditableWarning
           onInput={(e) => {
+            if (allMarkedRef.current) setAllMarked(false); // digitou por cima: os anexos ficam
             if (/\s/.test(e.nativeEvent?.data || '') || e.nativeEvent?.inputType === 'insertParagraph') linkifyTyped();
             setEmpty(!serialize(editor.current));
           }}

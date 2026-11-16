@@ -360,6 +360,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 .attach-locate { bottom: -6px; right: -6px; }
 .attach:hover .attach-x, .attach:hover .attach-locate { opacity: 1; }
 .attach-x:hover:not(:disabled) { background: var(--danger); border-color: var(--danger); }
+.attach-row.all-marked .attach-thumb { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary); }
+.attach-marked-hint { font-size: 11.5px; color: var(--muted); padding: 4px 2px 0; }
 .attach-loading { display: grid; place-items: center; border-radius: 11px; border: 1px dashed var(--line-2); }
 
 .editor-wrap { position: relative; padding: 2px 4px; }
