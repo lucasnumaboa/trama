@@ -14,6 +14,7 @@ import * as projects from './projects.js';
 import { exportModel, EXPORT_FORMATS } from './model3d.js';
 import { sendMessage, stopAgent, isRunning } from './agent.js';
 import { mountMcp, listTools as mcpTools } from './mcp.js';
+import { setupStatus, startInstall, cancelInstall, currentJob, workflowAvailability } from './setup.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.PORT || 5190);
@@ -37,9 +38,10 @@ app.get('/api/llm/models', wrap(async (req, res) => res.json({ models: await lis
 // ---- Capacidades (modelos padrão por categoria) ----
 app.get('/api/capabilities', wrap(async (req, res) => {
   const names = await comfy.listWorkflows().then((list) => list.map((w) => w.name)).catch(() => null);
+  const availability = names ? await workflowAvailability().catch(() => null) : null;
   // ?project=prj_x devolve os padrões já com as escolhas feitas no chat daquele projeto.
   const overrides = req.query.project ? projects.getProject(String(req.query.project)).models || {} : {};
-  res.json({ categories: listCapabilities({ workflowNames: names, overrides }), workflows: names || [] });
+  res.json({ categories: listCapabilities({ workflowNames: names, availability, overrides }), workflows: names || [] });
 }));
 app.put('/api/capabilities/default', wrap((req, res) => {
   res.json(setDefaultModel(String(req.body?.category || ''), String(req.body?.id || '')));
@@ -50,6 +52,15 @@ app.post('/api/capabilities/models', wrap((req, res) => {
 app.delete('/api/capabilities/models/:id', wrap((req, res) => {
   res.json(removeModel(decodeURIComponent(req.params.id)));
 }));
+
+// ---- Preparar ComfyUI (workflows, nós, pacotes e modelos do Trama) ----
+app.get('/api/setup', wrap(async (req, res) => res.json(await setupStatus())));
+app.get('/api/setup/job', (req, res) => res.json({ job: currentJob() }));
+app.post('/api/setup/install', wrap(async (req, res) => {
+  const workflows = Array.isArray(req.body?.workflows) ? req.body.workflows.map(String) : [];
+  res.json({ job: await startInstall({ workflows, updateBase: Boolean(req.body?.updateBase) }) });
+}));
+app.post('/api/setup/cancel', (req, res) => res.json({ job: cancelInstall() }));
 
 // ---- ComfyUI ----
 // Título e miniatura de um link colado no chat (oEmbed público dos sites de vídeo).

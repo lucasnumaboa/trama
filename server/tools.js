@@ -11,6 +11,7 @@ import { getSettings } from './settings.js';
 import { meshStats } from './model3d.js';
 import { analyzeAudio, suggestPitchShift, findPhrase, swapLyrics } from './audio.js';
 import { listCapabilities } from './capabilities.js';
+import { workflowAvailability } from './setup.js';
 import { isFlatDrawing, toonWorkflow, TOON_PROMPT } from './drawing.js';
 import { swapVideo, planChunks, matchPerson, DEFAULT_CHUNK, MAX_CHUNK, SWAP_WORKFLOW } from './swap.js';
 import { castOf, findCharacter, upsertCharacter, removeCharacter, mentionedCharacters, placeCharacters } from './cast.js';
@@ -308,7 +309,14 @@ export async function workflowCatalog() {
   if (catalogCache.text && Date.now() - catalogCache.at < 60000) return catalogCache.text;
   const lines = [];
   const inCategories = new Set(listCapabilities().flatMap((c) => c.models.map((m) => m.workflow)));
+  const availability = await workflowAvailability().catch(() => null);
   for (const w of await comfy.listWorkflows()) {
+    const avail = availability?.get(w.name);
+    if (avail && !avail.ok) {
+      // Falta nó ou modelo: o agente não deve oferecer (o usuário instala em Configurações).
+      lines.push(`- ${w.name}: indisponível neste ComfyUI (${clip(avail.reason, 200)}). Não ofereça nem rode.`);
+      continue;
+    }
     try {
       const d = await describeByName(w.name);
       const ins = d.mediaInputs.map((m) => `${KIND_PT[m.kind]} "${m.title}"`).join(' + ') || 'só texto';
@@ -519,8 +527,20 @@ const findAsset = (p, id) => {
 };
 
 // ---- Geração (nova ou como versão) -------------------------------------------
+/** Erro claro quando o workflow não roda no ComfyUI do usuário (falta nó ou modelo). */
+async function assertRunnable(name) {
+  const file = comfy.workflowFile(name);
+  let avail = (await workflowAvailability().catch(() => null))?.get(file);
+  // A lista pode ter até 1 min: confere de novo antes de recusar (ex.: acabou de instalar).
+  if (avail && !avail.ok) avail = (await workflowAvailability({ refresh: true }).catch(() => null))?.get(file);
+  if (avail && !avail.ok) {
+    throw new Error(`O workflow ${file} não roda no ComfyUI do usuário: ${avail.reason}. Não tente de novo: use outro workflow da mesma categoria ou diga ao usuário que dá para instalar o que falta em Configurações → Preparar ComfyUI.`);
+  }
+}
+
 async function generate(ctx, { name, values = {}, inputs = {}, characters = [], allowDefault = false, keepFlat = false, title, reviseId, note }) {
   const p = ctx.project;
+  await assertRunnable(name);
   const d = await describeByName(name);
   const media = {};
   const inputIds = [];
@@ -968,7 +988,13 @@ export async function runTool(name, args, ctx) {
   switch (name) {
     case 'list_workflows': {
       const out = [];
+      const availability = await workflowAvailability().catch(() => null);
       for (const w of await comfy.listWorkflows()) {
+        const avail = availability?.get(w.name);
+        if (avail && !avail.ok) {
+          out.push({ name: w.name, unavailable: `não roda neste ComfyUI: ${avail.reason}` });
+          continue;
+        }
         try {
           out.push(workflowSummary(await describeByName(w.name)));
         } catch (e) {

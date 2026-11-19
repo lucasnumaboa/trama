@@ -6,6 +6,8 @@ const MEDIA_FLAGS = { image_upload: 'image', video_upload: 'video', audio_upload
 // Nós de terceiros que carregam um modelo 3D de uma lista de arquivos (sem botão de upload):
 // o campo vira um slot de mídia do tipo modelo 3D, e o Trama põe o arquivo na pasta input.
 const MESH_LOADERS = { UniRigLoadMesh: 'file_path', TramaLoadMesh: 'mesh', TramaAnimate3D: 'model', TramaMotionToModel: 'model' };
+// Carregadores cujo botão de upload vem do JavaScript do nó (a definição não tem a flag).
+const UPLOAD_LOADERS = { VHS_LoadVideo: ['video', 'video'], VHS_LoadAudioUpload: ['audio', 'audio'] };
 const MODEL_FILE = /\.(safetensors|ckpt|pt|pth|bin|gguf|sft|onnx)$/i;
 const IMPORTANT = new Set([
   'width', 'height', 'length', 'steps', 'cfg', 'denoise', 'batch_size', 'duration', 'seconds',
@@ -73,7 +75,7 @@ export function describeWorkflow(name, workflow, objectInfo) {
       const spec = findInputSpec(def, input);
       if (!spec || !isWidgetSpec(spec)) continue;
       const [rawType, opts = {}] = spec;
-      const media = MESH_LOADERS[type] === input ? 'model3d' : mediaFlag(spec);
+      const media = MESH_LOADERS[type] === input ? 'model3d' : UPLOAD_LOADERS[type]?.[0] === input ? UPLOAD_LOADERS[type][1] : mediaFlag(spec);
       if (media) {
         mediaInputs.push({ id: `media:${id}`, nodeId: id, input, title, kind: media, default: value });
         continue;

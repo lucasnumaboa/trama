@@ -15,6 +15,7 @@ import { TOOL_SCHEMAS, runTool, workflowCatalog } from './tools.js';
 import { listProjects, getProject, createProject, saveProject, emit, shortId, describeAsset, projectEvents } from './projects.js';
 import { sendMessage, isRunning, stopAgent } from './agent.js';
 import { listCapabilities, capabilityPromptBlock } from './capabilities.js';
+import { workflowAvailability } from './setup.js';
 import * as comfy from './comfy.js';
 import { getProvider } from './llm.js';
 
@@ -232,19 +233,25 @@ export async function callTool(name, args = {}, { client = 'Agente externo', pro
 
     case 'list_capabilities': {
       const p = args.project_id ? getProject(args.project_id) : null;
-      const names = (await comfy.listWorkflows().catch(() => [])).map((w) => w.name);
-      const caps = listCapabilities({ workflowNames: names.length ? names : null, overrides: p?.models || {} }).map((c) => ({
-        id: c.id,
-        label: c.label,
-        default_workflow: c.models.find((m) => m.isDefault)?.workflow || null,
-        options: c.models.filter((m) => m.available !== false).map((m) => ({ label: m.label, workflow: m.workflow })),
-      }));
+      const availability = await workflowAvailability().catch(() => null);
+      const names = availability ? null : (await comfy.listWorkflows().catch(() => [])).map((w) => w.name);
+      const caps = listCapabilities({ workflowNames: names?.length ? names : null, availability, overrides: p?.models || {} }).map((c) => {
+        const options = c.models.filter((m) => m.available !== false);
+        const def = c.models.find((m) => m.isDefault && m.available !== false) || options[0];
+        return {
+          id: c.id,
+          label: c.label,
+          default_workflow: def?.workflow || null,
+          options: options.map((m) => ({ label: m.label, workflow: m.workflow })),
+          unavailable: c.models.filter((m) => m.available === false).map((m) => ({ workflow: m.workflow, missing: m.missing || 'não está no ComfyUI' })),
+        };
+      });
       const stats = await comfy.systemStats().catch(() => null);
       return text({
         comfyui: stats ? 'online' : 'offline',
         gpu: stats?.devices?.map((d) => `${d.name} (${Math.round(d.vram_total / 1e9)} GB)`),
         categories: caps,
-        defaults: capabilityPromptBlock(p?.models || {}),
+        defaults: capabilityPromptBlock(p?.models || {}, availability),
         workflows: await workflowCatalog().catch((e) => `não consegui ler os workflows: ${e.message}`),
       });
     }

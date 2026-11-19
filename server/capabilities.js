@@ -15,7 +15,7 @@ export const CATEGORIES = [
   { id: 'image_upscale', label: 'Ampliar imagem', description: 'Aumenta a resolução da imagem' },
   { id: 'image_background', label: 'Remover fundo', description: 'Recorta o objeto e deixa o fundo transparente' },
   { id: 'video_create', label: 'Criar vídeo', description: 'Texto, imagem ou referências para vídeo' },
-  { id: 'video_edit', label: 'Editar vídeo', description: 'Ampliar vídeo, trocar personagem, trocar só o rosto (e edições rápidas com ffmpeg)' },
+  { id: 'video_edit', label: 'Editar vídeo', description: 'Ampliar vídeo, trocar personagem, trocar só o rosto, sincronizar a boca com um áudio (e edições rápidas com ffmpeg)' },
   { id: 'music_create', label: 'Criar música', description: 'Música com ou sem voz a partir de texto' },
   { id: 'voice_edit', label: 'Edição de voz', description: 'Troca a voz de um áudio pela voz de referência' },
   { id: 'model3d_create', label: 'Criar modelo 3D', description: 'Imagem de um objeto ou personagem para modelo 3D com textura (GLB)' },
@@ -49,6 +49,7 @@ const BUILTIN = [
   ['video_edit', 'trama_ampliar_video.json', 'RealESRGAN 4x (ampliar vídeo)'],
   ['video_edit', 'h3_troca_personagem_3090.json', 'MiniMax H3 (trocar personagem no vídeo)'],
   ['video_edit', 'trama_face_swap_video.json', 'ReActor (face swap: troca só o rosto pelo de uma foto, mantém o som)'],
+  ['video_edit', 'trama_lip_sync_video.json', 'LatentSync 1.6 (lip sync: a boca do vídeo acompanha um áudio novo)'],
   ['music_create', 'trama_musica_com_voz_ace_step.json', 'ACE-Step 1.5 XL Turbo (com voz, melhor qualidade)'],
   ['music_create', 'trama_musica_ace_step_aio.json', 'ACE-Step 1.5 Turbo AIO (com voz, mais leve)'],
   ['music_create', 'stable_audio3_otimizado_3090.json', 'Stable Audio 3 (instrumental e efeitos)'],
@@ -115,9 +116,13 @@ function modelsOf(category) {
   return [...builtin, ...extra];
 }
 
+/** Workflows fixos do código: [{ category, workflow, label }]. */
+export const builtinWorkflows = () => BUILTIN.map(([category, workflow, label]) => ({ category, workflow, label }));
+
 // overrides: escolhas feitas no chat para um projeto ({ categoria: id }).
-function defaultModel(category, overrides = {}) {
-  const models = modelsOf(category);
+// available(workflow): quando informado, só os que rodam no ComfyUI entram na escolha.
+function defaultModel(category, overrides = {}, available = null) {
+  const models = modelsOf(category).filter((m) => !available || available(m.workflow));
   const chosen = store.defaults[category];
   return (
     models.find((m) => m.id === overrides[category]) ||
@@ -129,10 +134,14 @@ function defaultModel(category, overrides = {}) {
 }
 
 /**
- * @param {{ workflowNames?: string[] }} opts  nomes dos workflows que existem no ComfyUI (null = não conferido)
+ * @param {object} opts
+ * @param {string[]} [opts.workflowNames]  nomes dos workflows que existem no ComfyUI (null = não conferido)
+ * @param {Map<string,{ok:boolean,reason:string}>} [opts.availability]  o que roda no ComfyUI (setup.js);
+ *   vale mais que workflowNames: confere também nós e modelos.
  */
-export function listCapabilities({ workflowNames = null, overrides = {} } = {}) {
+export function listCapabilities({ workflowNames = null, overrides = {}, availability = null } = {}) {
   load();
+  const status = (workflow) => (availability ? availability.get(workflow) || { ok: false, reason: 'o workflow não está salvo no ComfyUI' } : null);
   return CATEGORIES.map((category) => {
     const def = defaultModel(category.id, overrides);
     return {
@@ -142,7 +151,8 @@ export function listCapabilities({ workflowNames = null, overrides = {} } = {}) 
       models: modelsOf(category.id).map((m) => ({
         ...m,
         isDefault: m.id === def?.id,
-        available: workflowNames ? workflowNames.includes(m.workflow) : null,
+        available: availability ? status(m.workflow).ok : workflowNames ? workflowNames.includes(m.workflow) : null,
+        missing: availability && !status(m.workflow).ok ? status(m.workflow).reason : undefined,
       })),
     };
   });
@@ -192,12 +202,30 @@ export function defaultWorkflow(category) {
   return defaultModel(category)?.workflow ?? null;
 }
 
-/** Texto que vai para o prompt do agente: padrão de cada categoria e as outras opções. */
-export function capabilityPromptBlock(overrides = {}) {
-  return listCapabilities({ overrides }).map((c) => {
-    const def = c.models.find((m) => m.isDefault);
-    const others = c.models.filter((m) => !m.isDefault).map((m) => `${m.label} (${m.workflow})`);
-    if (!def) return `- ${c.label}: nenhum modelo configurado.`;
-    return `- ${c.label}: padrão "${def.label}" (workflow ${def.workflow})${others.length ? `. Outras opções, só se o usuário pedir: ${others.join('; ')}` : ''}.`;
-  }).join('\n');
+/**
+ * Texto que vai para o prompt do agente: padrão de cada categoria e as outras opções.
+ * Com availability, o que não roda no ComfyUI do usuário sai das opções (o padrão vira o
+ * primeiro que roda) e aparece só numa lista de indisponíveis, para o agente não oferecer.
+ */
+export function capabilityPromptBlock(overrides = {}, availability = null) {
+  load();
+  const ok = availability ? (w) => Boolean(availability.get(w)?.ok) : null;
+  const lines = CATEGORIES.map((category) => {
+    const models = modelsOf(category.id).filter((m) => !ok || ok(m.workflow));
+    const def = defaultModel(category.id, overrides, ok);
+    const others = models.filter((m) => m.id !== def?.id).map((m) => `${m.label} (${m.workflow})`);
+    if (!def) {
+      return availability
+        ? `- ${category.label}: nenhum modelo instalado no ComfyUI do usuário. Não ofereça; diga que dá para instalar em Configurações → Preparar ComfyUI.`
+        : `- ${category.label}: nenhum modelo configurado.`;
+    }
+    return `- ${category.label}: padrão "${def.label}" (workflow ${def.workflow})${others.length ? `. Outras opções, só se o usuário pedir: ${others.join('; ')}` : ''}.`;
+  });
+  if (availability) {
+    const missing = CATEGORIES.flatMap((c) => modelsOf(c.id)).filter((m) => !ok(m.workflow));
+    const seen = new Set();
+    const items = missing.filter((m) => !seen.has(m.workflow) && seen.add(m.workflow)).map((m) => `${m.workflow} (${availability.get(m.workflow)?.reason || 'não está no ComfyUI'})`);
+    if (items.length) lines.push(`Indisponíveis no ComfyUI do usuário (não ofereça nem rode; se ele pedir, diga o que falta e que instala em Configurações → Preparar ComfyUI): ${items.join('; ')}.`);
+  }
+  return lines.join('\n');
 }

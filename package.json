@@ -1,6 +1,6 @@
 {
   "name": "trama",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -48,6 +48,10 @@
       "server/**",
       "!server/**/*.test.js",
       "!server/fixtures/**",
+      "comfy-workflows/trama_*.json",
+      "comfy-nodes/ComfyUI-Trama/**",
+      "!comfy-nodes/**/__pycache__/**",
+      "!comfy-nodes/**/tests/**",
       "dist/**",
       "public/**",
       "package.json"

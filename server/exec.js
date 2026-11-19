@@ -44,8 +44,10 @@ function coerce(field, value) {
   return value;
 }
 
-function randomSeed(field) {
-  const max = Math.min(Number.isFinite(field.max) ? field.max : 2 ** 50, 2 ** 50);
+export function randomSeed(field) {
+  // Sem máximo declarado, fica em 32 bits: nós que passam a seed ao numpy (ex.: LatentSync)
+  // recusam valores acima de 2**32 - 1.
+  const max = Math.min(Number.isFinite(field.max) ? field.max : 2 ** 32 - 1, 2 ** 50);
   const min = Number.isFinite(field.min) ? field.min : 0;
   return min + Math.floor(Math.random() * (max - min));
 }

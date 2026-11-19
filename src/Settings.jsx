@@ -55,6 +55,223 @@ function McpSettings({ setMessage }) {
   );
 }
 
+const gb = (bytes) => {
+  if (!bytes) return '0 GB';
+  const v = bytes / 1e9;
+  return `${v < 0.1 ? '<0,1' : v.toFixed(v >= 10 ? 0 : 1).replace('.', ',')} GB`;
+};
+const versionLess = (a, b) => {
+  const pa = String(a || '').split('.').map(Number);
+  const pb = String(b || '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) < (pb[i] || 0);
+  return false;
+};
+const STEP_ICON = { done: '✓', error: '✕', warning: '!', running: '…' };
+
+/**
+ * Preparar ComfyUI: o que cada workflow do Trama precisa (workflow salvo, nós, pacotes
+ * do Python, modelos), com tamanho, e o botão que instala o que falta.
+ */
+function ComfySetup({ setMessage, onChanged }) {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [chosen, setChosen] = useState(() => new Set());
+  const [updateBase, setUpdateBase] = useState(true);
+  const [job, setJob] = useState(null);
+
+  async function check() {
+    setLoading(true);
+    setError('');
+    try {
+      const s = await api.setupStatus();
+      setStatus(s);
+      onChanged?.();
+      setChosen((prev) => new Set([...prev].filter((n) => s.categories.some((c) => c.workflows.some((w) => w.name === n && !w.ready)))));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => {
+    check();
+    api.setupJob().then((r) => r.job && setJob(r.job)).catch(() => {});
+  }, []);
+  // Acompanha a instalação; quando termina, confere de novo.
+  useEffect(() => {
+    if (job?.state !== 'running') return undefined;
+    const t = setInterval(async () => {
+      const r = await api.setupJob().catch(() => null);
+      if (!r?.job) return;
+      setJob(r.job);
+      if (r.job.state !== 'running') check();
+    }, 1000);
+    return () => clearInterval(t);
+  }, [job?.state, job?.id]);
+
+  const all = status?.categories?.flatMap((c) => c.workflows) || [];
+  const missing = all.filter((w) => !w.ready);
+  const selectedModels = [...new Set(all.filter((w) => chosen.has(w.name)).flatMap((w) => w.missingModels))];
+  const selectedBytes = selectedModels.reduce((s, id) => s + (status?.models?.[id]?.size || 0), 0);
+  const free = status?.comfy?.freeBytes ?? null;
+  const tooBig = free !== null && selectedBytes + 2e9 > free;
+  const base = status?.base;
+  const baseOutdated = base && (base.tramaNode === 'outdated' || base.different?.length > 0);
+  const running = job?.state === 'running';
+  const canInstall = !running && (chosen.size > 0 || (baseOutdated && updateBase)) && !tooBig;
+
+  const toggle = (name) => setChosen((prev) => {
+    const next = new Set(prev);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    return next;
+  });
+
+  async function install() {
+    try {
+      const r = await api.setupInstall({ workflows: [...chosen], updateBase: Boolean(baseOutdated && updateBase) });
+      setJob(r.job);
+      setMessage('Instalando… pode fechar as Configurações: a instalação continua.');
+    } catch (e) {
+      setMessage(e.message);
+    }
+  }
+  async function cancel() {
+    const r = await api.setupCancel().catch(() => null);
+    if (r?.job) setJob(r.job);
+  }
+
+  const c = status?.comfy;
+  const progress = job?.current?.total ? Math.min(100, Math.round((job.current.bytes / job.current.total) * 100)) : null;
+  return (
+    <section id="settings-setup">
+      <h3>Preparar ComfyUI</h3>
+      <p className="hint">
+        Confere se o seu ComfyUI tem o que cada workflow do Trama precisa (o workflow salvo, os nós, os pacotes do Python e os modelos) e
+        instala o que faltar. Marque só o que vai usar: os modelos de vídeo têm dezenas de GB. Só mexe em workflows que começam com
+        "trama_"; nunca fecha nem reinicia o ComfyUI.
+      </p>
+      {loading && !status && <p className="muted small">Conferindo o ComfyUI…</p>}
+      {error && <p className="setup-warn">{error}</p>}
+      {c && !c.online && <p className="setup-warn">{c.error}</p>}
+      {c?.online && (
+        <>
+          <p className="muted small">
+            ComfyUI {c.version}
+            {c.gpu?.length ? ` · ${c.gpu.join(', ')}` : ''}
+            {c.cuda ? ` · torch CUDA ${c.cuda}` : ''}
+            {free !== null ? ` · disco ${c.drive} com ${gb(free)} livres` : ''}
+          </p>
+          {versionLess(c.version, c.tested) && (
+            <p className="setup-warn">Os workflows do Trama foram testados no ComfyUI {c.tested}. Se algum aparecer como "ComfyUI antigo", atualize o ComfyUI.</p>
+          )}
+          {!c.local && <p className="setup-warn">O ComfyUI roda em outra máquina: aqui dá para ver o que falta e copiar os workflows; nós e modelos são instalados na máquina dele.</p>}
+          {c.local && !c.python && <p className="setup-warn">Não achei o Python do ComfyUI (python_embeded ou venv): os pacotes do Python não serão conferidos nem instalados.</p>}
+          {c.local && !c.git && <p className="muted small">Sem git neste computador: os nós são baixados como zip do GitHub.</p>}
+
+          {baseOutdated && (
+            <label className="check">
+              <input type="checkbox" checked={updateBase} onChange={(e) => setUpdateBase(e.target.checked)} disabled={running} />
+              <span>
+                Atualizar a base do Trama
+                <small>
+                  {[
+                    base.tramaNode === 'outdated' ? 'o nó ComfyUI-Trama está numa versão antiga' : null,
+                    base.different?.length ? `${base.different.length} workflow(s) trama_ diferentes da versão do Trama (a versão atual fica em workflows/.trama-backup)` : null,
+                  ].filter(Boolean).join('; ')}
+                  .
+                </small>
+              </span>
+            </label>
+          )}
+
+          {status.categories.map((cat) => (
+            <div className="setup-cat" key={cat.id}>
+              <div className="setup-cat-title">{cat.label}</div>
+              {cat.workflows.map((w) => (
+                <label className={`setup-row ${w.ready ? 'ready' : ''}`} key={w.name} title={w.name}>
+                  <input type="checkbox" disabled={w.ready || running} checked={!w.ready && chosen.has(w.name)} onChange={() => toggle(w.name)} />
+                  <span className="setup-name">
+                    {w.label}
+                    <small>{w.ready ? 'Pronto' : w.summary}</small>
+                  </span>
+                  {!w.ready && w.missingBytes > 0 && <span className="setup-size">{gb(w.missingBytes)}</span>}
+                  {w.ready && <span className="setup-ok">✓</span>}
+                </label>
+              ))}
+            </div>
+          ))}
+
+          <div className="row setup-actions">
+            <span className="muted small">
+              {missing.length ? `${missing.length} workflow(s) com algo faltando.` : 'Tudo pronto.'}
+              {chosen.size > 0 && ` Marcados: ${chosen.size}, ${gb(selectedBytes)} de modelos.`}
+            </span>
+            {missing.length > 0 && (
+              <button disabled={running} onClick={() => setChosen(new Set(chosen.size ? [] : missing.map((w) => w.name)))}>
+                {chosen.size ? 'Desmarcar' : 'Marcar todos'}
+              </button>
+            )}
+            <button onClick={check} disabled={loading || running}>
+              {loading ? 'Conferindo…' : 'Conferir de novo'}
+            </button>
+            <button className="primary" disabled={!canInstall} onClick={install}>
+              Instalar o que falta
+            </button>
+          </div>
+          {tooBig && <p className="setup-warn">Os modelos marcados ({gb(selectedBytes)}) não cabem no disco {c.drive} ({gb(free)} livres, o Trama deixa 2 GB de folga). Desmarque alguns.</p>}
+          {selectedModels.some((id) => status.models[id]?.manual) && <p className="muted small">Algum modelo marcado não tem link público: ele é listado no fim para você copiar à mão.</p>}
+        </>
+      )}
+
+      {job && (
+        <div className="setup-job">
+          <div className="setup-cat-title">
+            {running ? 'Instalando' : job.state === 'done' ? 'Instalação concluída' : job.state === 'cancelled' ? 'Instalação cancelada' : 'A instalação parou'}
+          </div>
+          {job.steps.map((s, i) => (
+            <div className={`setup-step ${s.status}`} key={i}>
+              <span className="setup-step-icon">{STEP_ICON[s.status] || '•'}</span>
+              <span>
+                {s.label}
+                {s.detail && <small>{s.detail}</small>}
+              </span>
+            </div>
+          ))}
+          {running && job.current?.file && (
+            <div className="setup-progress">
+              <div className="setup-bar">
+                <div style={{ width: `${progress || 0}%` }} />
+              </div>
+              <small>
+                {job.current.file}: {gb(job.current.bytes)} de {gb(job.current.total)}
+              </small>
+            </div>
+          )}
+          {job.error && <p className="setup-warn">{job.error}</p>}
+          {!running && job.restartNeeded && (
+            <p className="setup-restart">Reinicie o ComfyUI (feche e abra pelo atalho) para ele carregar os nós e pacotes novos. Depois clique em Conferir de novo.</p>
+          )}
+          {job.log?.length > 0 && (
+            <details>
+              <summary className="muted small">Detalhes</summary>
+              <pre className="setup-log">{job.log.slice(-60).join('\n')}</pre>
+            </details>
+          )}
+          {running && (
+            <div className="row">
+              <button className="danger" onClick={cancel}>
+                Cancelar
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 /** Um bloco por provedor: chave, modelo e endereço salvos separadamente. */
 function ProviderSettings({ settings, onSaved, initial, setMessage }) {
   const providers = settings?.providers || {};
@@ -277,6 +494,8 @@ export default function Settings({ settings, onClose, onSaved, initialProvider }
           </div>
         </section>
 
+        <ComfySetup setMessage={setMessage} onChanged={loadCaps} />
+
         <section id="settings-models">
           <h3>Modelos padrão</h3>
           <p className="hint">
@@ -292,7 +511,7 @@ export default function Settings({ settings, onClose, onSaved, initialProvider }
                 {c.models.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.label}
-                    {m.available === false ? ' (workflow não encontrado no ComfyUI)' : ''}
+                    {m.available === false ? ` (não roda no ComfyUI: ${m.missing || 'workflow não encontrado'})` : ''}
                   </option>
                 ))}
               </select>

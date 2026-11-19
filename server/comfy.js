@@ -64,6 +64,18 @@ export const workflowFile = (name) => {
 };
 export const loadWorkflow = (name) => getJson(`/api/userdata/${encodeURIComponent(`workflows/${workflowFile(name)}`)}`);
 
+/** Grava um arquivo na pasta do usuário do ComfyUI (ex.: "workflows/trama_x.json"), sobrescrevendo. */
+export async function saveUserdata(file, text) {
+  await request(`/api/userdata/${encodeURIComponent(file)}?overwrite=true`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: text,
+  });
+}
+
+/** Pastas que o ComfyUI usa: { custom_nodes: [...], checkpoints: [...], ... }. */
+export const folderPaths = () => getJson('/internal/folder_paths', { timeout: 5000 });
+
 /** Envia um arquivo para a pasta input do ComfyUI. Devolve o nome a usar nos nós Load*. */
 export async function uploadInput(buffer, filename, { overwrite = true, subfolder = '' } = {}) {
   const form = new FormData();
@@ -86,7 +98,7 @@ export async function fetchFile({ filename, subfolder = '', type = 'output' }) {
 let dirsCache = null;
 async function comfyDirs() {
   if (dirsCache && Date.now() - dirsCache.at < 60000) return dirsCache.value;
-  const [paths, stats] = await Promise.all([getJson('/internal/folder_paths', { timeout: 5000 }), systemStats()]);
+  const [paths, stats] = await Promise.all([folderPaths(), systemStats()]);
   const customNodes = paths.custom_nodes?.[0];
   if (!customNodes) throw new Error('O ComfyUI não informou as pastas dele.');
   const sep = customNodes.includes('\\') ? '\\' : '/';
