@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { api, fileUrl, downloadFile } from './api.js';
 import { Icon, KIND_LABEL } from './ui.jsx';
 import { getVolume, saveVolume } from './volume.js';
+import { ImagePainter } from './ImagePainter.jsx';
 const ModelViewer = lazy(() => import('./Model3D.jsx').then((m) => ({ default: m.ModelViewer })));
 const ExportMenu = lazy(() => import('./Model3D.jsx').then((m) => ({ default: m.ExportMenu })));
 
@@ -62,7 +63,7 @@ export function WorkflowsModal({ onClose }) {
   );
 }
 
-export function PreviewModal({ asset, onClose, onSaveText, onVersion, onFix3d, agentBusy }) {
+export function PreviewModal({ asset, onClose, onSaveText, onVersion, onFix3d, onPaintImage, agentBusy }) {
   const [text, setText] = useState(asset.text || '');
   const [revealError, setRevealError] = useState('');
   const url = fileUrl(asset.file);
@@ -100,7 +101,14 @@ export function PreviewModal({ asset, onClose, onSaveText, onVersion, onFix3d, a
         </div>
         {revealError && <div className="msg-error">{revealError}</div>}
         <div className="preview-body">
-          {asset.kind === 'image' && <img src={url} alt={asset.title} />}
+          {asset.kind === 'image' && url && (
+            <ImagePainter
+              url={url}
+              title={asset.title}
+              busy={asset.status === 'generating' || agentBusy}
+              onPaint={onPaintImage && !/\.gif$/i.test(asset.file.filename) ? (paint) => onPaintImage(asset, paint) : undefined}
+            />
+          )}
           {asset.kind === 'video' && (
             <video
               src={url}

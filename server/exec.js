@@ -129,7 +129,11 @@ function collectFiles(history, desc, prompt, seeds) {
     seen.add(nodeId);
     // PreviewImage, MaskPreview, PreviewAny… e qualquer arquivo temporário são só prévia.
     const isPreview = /preview/i.test(prompt[nodeId]?.class_type || '');
-    for (const f of byNode[nodeId] || []) files.push({ ...f, nodeId, preview: isPreview || f.type === 'temp' });
+    for (const f of byNode[nodeId] || []) {
+      // LoadVideo e afins devolvem o próprio arquivo de entrada na interface: não é resultado.
+      if (f.type === 'input') continue;
+      files.push({ ...f, nodeId, preview: isPreview || f.type === 'temp' });
+    }
   }
   // Se houver saídas "Save", ignora as "Preview" (são cópias temporárias).
   const saved = files.filter((f) => !f.preview);

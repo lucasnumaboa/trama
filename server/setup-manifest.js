@@ -25,7 +25,7 @@ export const NODE_PACKS = {
     bundled: true,
     classes: [
       'TramaMatchVolume', 'TramaMixAudio', 'TramaAudioWindow', 'TramaAceRepaint', 'TramaRepaintSplice', 'TramaLoadMesh',
-      'TramaRiggedToGlb', 'TramaContrastBackground', 'TramaLimitMetallic', 'TramaAnimate3D', 'TramaMatchColor', 'TramaMotionToModel',
+      'TramaRiggedToGlb', 'TramaContrastBackground', 'TramaLimitMetallic', 'TramaAnimate3D', 'TramaMatchColor', 'TramaMotionToModel', 'TramaVideoMask',
     ],
     pip: [pip('librosa==1.0.0'), pip('trimesh==5.2.1')],
   },
@@ -49,6 +49,15 @@ export const NODE_PACKS = {
     // %LOCALAPPDATA%\Programs\comfy-env, baixados pelo próprio install.py.
     installScript: 'install.py',
     note: 'Depois do clone roda o install.py do UniRig, que monta um ambiente isolado com o Blender (alguns GB fora da pasta do ComfyUI).',
+  },
+  'ComfyUI_Fill-ChatterBox': {
+    label: 'ComfyUI_Fill-ChatterBox (voz a partir de texto)',
+    repo: 'https://github.com/filliptm/ComfyUI_Fill-ChatterBox',
+    ref: 'f7d7a16187430abcaf91a3039b9c83aa9960816a',
+    version: '1.0.5',
+    classes: ['FL_ChatterboxMultilingualTTS'],
+    // O resto (transformers, diffusers, librosa, omegaconf, soundfile) já vem com o ComfyUI.
+    pip: [pip('s3tokenizer==0.3.0'), pip('conformer==0.3.2'), pip('resampy==0.4.3')],
   },
   'ComfyUI-ReActor': {
     label: 'ComfyUI-ReActor (face swap)',
@@ -131,6 +140,8 @@ export const MODELS = {
   'z_image_turbo_bf16.safetensors': one('diffusion_models', 'z_image_turbo_bf16.safetensors', `${HF}/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors`, 12309866400),
   'qwen_3_4b.safetensors': one('text_encoders', 'qwen_3_4b.safetensors', `${HF}/Comfy-Org/flux2-klein/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors`, 8044982048),
   'ae.safetensors': one('vae', 'ae.safetensors', `${HF}/Comfy-Org/HiDream-I1_ComfyUI/resolve/main/split_files/vae/ae.safetensors`, 335304388),
+  'Z-Image-Turbo-Fun-Controlnet-Union.safetensors': one('model_patches', 'Z-Image-Turbo-Fun-Controlnet-Union.safetensors', `${HF}/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union/resolve/main/Z-Image-Turbo-Fun-Controlnet-Union.safetensors`, 3101572408),
+  'sdpose_wholebody_fp16.safetensors': one('checkpoints', 'sdpose_wholebody_fp16.safetensors', `${HF}/Comfy-Org/SDPose/resolve/main/checkpoints/sdpose_wholebody_fp16.safetensors`, 1916645792),
   'qwen_image_fp8_e4m3fn.safetensors': one('diffusion_models', 'qwen_image_fp8_e4m3fn.safetensors', `${HF}/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors`, 20430635136),
   'qwen_2.5_vl_7b_fp8_scaled.safetensors': one('text_encoders', 'qwen_2.5_vl_7b_fp8_scaled.safetensors', `${HF}/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors`, 9384670680),
   'qwen_image_vae.safetensors': one('vae', 'qwen_image_vae.safetensors', `${HF}/Comfy-Org/Krea-2/resolve/main/vae/qwen_image_vae.safetensors`, 253806246),
@@ -179,6 +190,15 @@ export const MODELS = {
   'qwen_4b_ace15.safetensors': one('text_encoders', 'qwen_4b_ace15.safetensors', `${HF}/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/text_encoders/qwen_4b_ace15.safetensors`, 8379154232),
   'ace_step_1.5_turbo_aio.safetensors': one('checkpoints', 'ace_step_1.5_turbo_aio.safetensors', `${HF}/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/checkpoints/ace_step_1.5_turbo_aio.safetensors`, 10025478736),
   // Voz: Seed-VC e MelBandRoFormer
+  'minimax_music3_dit_fp16.safetensors': one('diffusion_models', 'minimax_music3_dit_fp16.safetensors', `${HF}/Comfy-Org/MiniMax-Music-3/resolve/main/diffusion_models/minimax_music3_dit_fp16.safetensors`, 4914197682),
+  'minimax_music3_text_encoder_pruned_int8_convrot.safetensors': one('text_encoders', 'minimax_music3_text_encoder_pruned_int8_convrot.safetensors', `${HF}/Comfy-Org/MiniMax-Music-3/resolve/main/text_encoders/minimax_music3_text_encoder_pruned_int8_convrot.safetensors`, 9196611886),
+  'minimax_music3_dav.safetensors': one('vae', 'minimax_music3_dav.safetensors', `${HF}/Comfy-Org/MiniMax-Music-3/resolve/main/vae/minimax_music3_dav.safetensors`, 216696128),
+  // O nó lê de models/chatterbox/chatterbox_multilingual (baixa sozinho se faltar, pelo cache do HF).
+  'chatterbox_multilingual': repoFiles('chatterbox/chatterbox_multilingual', 'ResembleAI/chatterbox', [
+    ['t3_mtl23ls_v2.safetensors', 2143989752], ['s3gen.pt', 1057165844], ['ve.pt', 5698626], ['grapheme_mtl_merged_expanded_v1.json', 69989],
+    ['conds.pt', 107374], ['Cangjie5_TC.json', 1920163],
+  ]),
+  'rife_v4.26.safetensors': one('frame_interpolation', 'rife_v4.26.safetensors', `${HF}/Comfy-Org/Frame-Interpolation/resolve/main/frame_interpolation/rife_v4.26.safetensors`, 22674688),
   'MelBandRoformer_fp16.safetensors': one('diffusion_models', 'MelBandRoformer_fp16.safetensors', `${HF}/Kijai/MelBandRoFormer_comfy/resolve/main/MelBandRoformer_fp16.safetensors`, 456479072),
   'Seed-VC': {
     dir: 'TTS/Seed-VC',
@@ -248,6 +268,12 @@ export const MODELS = {
  */
 export const WORKFLOWS = {
   'trama_imagem_z_image_turbo.json': { packs: [], models: ['z_image_turbo_bf16.safetensors', 'qwen_3_4b.safetensors', 'ae.safetensors'] },
+  // Imagem com controle: a referência vira estrutura (pose, contorno ou profundidade) pelo ControlNet Union do Z-Image.
+  'trama_imagem_pose_z_image.json': { packs: [], models: ['z_image_turbo_bf16.safetensors', 'qwen_3_4b.safetensors', 'ae.safetensors', 'Z-Image-Turbo-Fun-Controlnet-Union.safetensors', 'sdpose_wholebody_fp16.safetensors'] },
+  'trama_imagem_contorno_z_image.json': { packs: [], models: ['z_image_turbo_bf16.safetensors', 'qwen_3_4b.safetensors', 'ae.safetensors', 'Z-Image-Turbo-Fun-Controlnet-Union.safetensors'] },
+  'trama_imagem_profundidade_z_image.json': { packs: [], models: ['z_image_turbo_bf16.safetensors', 'qwen_3_4b.safetensors', 'ae.safetensors', 'Z-Image-Turbo-Fun-Controlnet-Union.safetensors', 'moge_2_vitl_normal_fp16.safetensors'] },
+  'trama_imagem_pintar_regiao.json': { packs: [], models: ['z_image_turbo_bf16.safetensors', 'qwen_3_4b.safetensors', 'ae.safetensors'] },
+  'trama_imagem_expandir.json': { packs: [], models: ['z_image_turbo_bf16.safetensors', 'qwen_3_4b.safetensors', 'ae.safetensors'] },
   'trama_imagem_qwen_image.json': { packs: [], models: ['qwen_image_fp8_e4m3fn.safetensors', 'qwen_2.5_vl_7b_fp8_scaled.safetensors', 'qwen_image_vae.safetensors'] },
   'trama_imagem_flux2_klein.json': { packs: [], models: ['flux-2-klein-4b-fp8.safetensors', 'qwen_3_4b.safetensors', 'flux2-vae.safetensors'] },
   'trama_imagem_ernie_turbo.json': { packs: [], models: ['ernie-image-turbo.safetensors', 'ministral-3-3b.safetensors', 'ernie-image-prompt-enhancer.safetensors', 'flux2-vae.safetensors'] },
@@ -258,22 +284,32 @@ export const WORKFLOWS = {
   'trama_editar_imagem_flux2_klein.json': { packs: [], models: ['flux-2-klein-4b-fp8.safetensors', 'qwen_3_4b.safetensors', 'flux2-vae.safetensors'] },
   'trama_ampliar_imagem.json': { packs: [], models: ['RealESRGAN_x4plus.pth'] },
   'trama_remover_fundo.json': { packs: [], models: ['birefnet.safetensors'] },
+  'trama_video_remover_fundo.json': { packs: ['ComfyUI-Trama'], models: ['birefnet.safetensors'] },
+  'trama_video_trocar_fundo.json': { packs: ['ComfyUI-Trama'], models: ['birefnet.safetensors'] },
   'trama_video_h3_texto.json': { packs: [], models: ['minimax_h3_fl2va_pruned_int8_convrot.safetensors', 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', 'minimax_h3_video_vae_fp16.safetensors', 'minimax_h3_audio_vae_fp32.safetensors', 'RealESRGAN_x2plus.pth'] },
   'trama_video_h3_imagem.json': { packs: [], models: ['minimax_h3_fl2va_pruned_int8_convrot.safetensors', 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', 'minimax_h3_video_vae_fp16.safetensors', 'minimax_h3_audio_vae_fp32.safetensors', 'RealESRGAN_x2plus.pth'] },
   'trama_h3_primeiro_ultimo_quadro.json': { packs: [], models: ['minimax_h3_fl2va_pruned_int8_convrot.safetensors', 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', 'minimax_h3_video_vae_fp16.safetensors', 'minimax_h3_audio_vae_fp32.safetensors', 'RealESRGAN_x2plus.pth'] },
   'trama_video_h3_referencia.json': { packs: [], models: ['minimax_h3_ref2va_pruned_int8_convrot.safetensors', 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', 'minimax_h3_video_vae_fp16.safetensors', 'minimax_h3_audio_vae_fp32.safetensors', 'RealESRGAN_x2plus.pth'] },
   'trama_video_ltx23_texto.json': { packs: [], models: ['ltx-2.3-22b-dev-fp8.safetensors', 'ltx-2.3-22b-distilled-lora-384.safetensors', 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors', 'gemma_3_12B_it_fp4_mixed.safetensors'] },
   'trama_video_ltx23_imagem.json': { packs: [], models: ['ltx-2.3-22b-dev-fp8.safetensors', 'ltx-2.3-22b-distilled-lora-384.safetensors', 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors', 'gemma_3_12B_it_fp4_mixed.safetensors'] },
+  'trama_foto_falando.json': { packs: [], models: ['ltx-2.3-22b-dev-fp8.safetensors', 'ltx-2.3-22b-distilled-lora-384.safetensors', 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors', 'gemma_3_12B_it_fp4_mixed.safetensors'] },
   'trama_video_wan22_imagem.json': { packs: [], models: ['wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors', 'wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors', 'wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors', 'wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors', 'wan_2.1_vae.safetensors'] },
   'trama_video_wan22_quadros.json': { packs: [], models: ['wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors', 'wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors', 'wan_2.1_vae.safetensors'] },
+  'trama_interpolar_quadros.json': { packs: [], models: ['rife_v4.26.safetensors'] },
   'trama_ampliar_video.json': { packs: [], models: ['RealESRGAN_x4plus.pth'] },
+  'trama_ampliar_video_ltx23.json': { packs: [], models: ['RealESRGAN_x2plus.pth', 'ltx-2.3-22b-dev-fp8.safetensors', 'ltx-2.3-22b-distilled-lora-384.safetensors', 'gemma_3_12B_it_fp4_mixed.safetensors'] },
   'trama_trocar_personagem_video.json': { packs: [], category: 'internal', label: 'MiniMax H3 (trocar personagem no vídeo)', models: ['minimax_h3_fl2va_pruned_int8_convrot.safetensors', 'h3_character_swap_pro4500_1000.safetensors', 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', 'minimax_h3_video_vae_fp16.safetensors', 'minimax_h3_audio_vae_fp32.safetensors', 'RealESRGAN_x2plus.pth'] },
+  'trama_face_swap_foto.json': { packs: ['ComfyUI-ReActor'], models: ['inswapper_128.onnx', 'GPEN-BFR-512.onnx', 'vit-base-nsfw-detector', 'buffalo_l', 'facedetection'] },
   'trama_face_swap_video.json': { packs: ['ComfyUI-ReActor'], models: ['inswapper_128.onnx', 'GPEN-BFR-512.onnx', 'vit-base-nsfw-detector', 'buffalo_l', 'facedetection'] },
   // O detector de rosto é o buffalo_l do ReActor (o ReActor baixa no primeiro uso).
   'trama_lip_sync_video.json': { packs: ['ComfyUI-LatentSyncWrapper', 'ComfyUI-ReActor', 'ComfyUI-VideoHelperSuite'], models: ['latentsync_unet.pt', 'latentsync-whisper-tiny', 'sd-vae-ft-mse', 'latentsync-ffmpeg', 'buffalo_l'] },
   'trama_musica_com_voz_ace_step.json': { packs: [], models: ['acestep_v1.5_xl_turbo_bf16.safetensors', 'ace_1.5_vae.safetensors', 'qwen_0.6b_ace15.safetensors', 'qwen_4b_ace15.safetensors'] },
+  'trama_musica_minimax_music3.json': { packs: [], models: ['minimax_music3_dit_fp16.safetensors', 'minimax_music3_text_encoder_pruned_int8_convrot.safetensors', 'minimax_music3_dav.safetensors'] },
   'trama_musica_ace_step_aio.json': { packs: [], models: ['ace_step_1.5_turbo_aio.safetensors'] },
   'trama_editar_trecho_musica.json': { packs: ['ComfyUI-Trama'], models: ['acestep_v1.5_xl_turbo_bf16.safetensors', 'ace_1.5_vae.safetensors', 'qwen_0.6b_ace15.safetensors', 'qwen_4b_ace15.safetensors'] },
+  'trama_separar_voz.json': { packs: ['ComfyUI-MelBandRoFormer'], models: ['MelBandRoformer_fp16.safetensors'] },
+  'trama_voz_texto.json': { packs: ['ComfyUI_Fill-ChatterBox'], models: ['chatterbox_multilingual'] },
+  'trama_voz_texto_clonada.json': { packs: ['ComfyUI_Fill-ChatterBox'], models: ['chatterbox_multilingual'] },
   'trama_trocar_voz.json': { packs: ['ComfyUI_Seed-VC'], models: ['Seed-VC', 'bigvgan_v2_22khz_80band_256x', 'bigvgan_v2_44khz_128band_512x', 'whisper-small'] },
   'trama_trocar_voz_musica.json': { packs: ['ComfyUI_Seed-VC', 'ComfyUI-MelBandRoFormer', 'ComfyUI-Trama'], models: ['MelBandRoformer_fp16.safetensors', 'Seed-VC', 'bigvgan_v2_22khz_80band_256x', 'bigvgan_v2_44khz_128band_512x', 'whisper-small'] },
   'trama_3d_trellis2.json': { packs: ['ComfyUI-Trama'], models: ['trellis_2_int8_convrot.safetensors', 'trellis_2_shape_vae_bf16.safetensors', 'trellis_2_texture_vae_bf16.safetensors', 'dino_v3_L_naf_fp32.safetensors', 'birefnet.safetensors'] },

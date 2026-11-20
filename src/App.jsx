@@ -185,6 +185,27 @@ export default function App() {
     }
     setPreview(null);
   }
+  // "Pintar região" numa imagem: a máscara (branco = onde muda) vira um card ao lado e
+  // vai para o agente junto com a imagem e o pedido.
+  async function paintImage(asset, { blob, text }) {
+    if (running) throw new Error('O agente ainda está trabalhando neste projeto. Espere terminar e peça de novo.');
+    const pos = asset.position ? { x: asset.position.x + 360, y: asset.position.y } : undefined;
+    const file = new File([blob], `mascara-${asset.title}.png`.replace(/[\\/:*?"<>|]+/g, '_'), { type: 'image/png' });
+    const mask = await api.upload(project.id, file, pos);
+    await api.updateAsset(project.id, mask.id, { title: `Máscara: ${text}`.slice(0, 80) }).catch(() => {});
+    setRunning(true);
+    try {
+      await api.send(project.id, {
+        text: `Mude só a região pintada da imagem "${asset.title}": ${text}. A região está na máscara "Máscara: ${text}" (branco = onde muda).`.slice(0, 2000),
+        attachments: [asset.id, mask.id],
+        ...agentChoice(),
+      });
+    } catch (e) {
+      setRunning(false);
+      throw e;
+    }
+    setPreview(null);
+  }
   const focusAsset = useCallback((id) => {
     setFocus({ id, at: Date.now() });
     fromChat.current = true;
@@ -242,6 +263,7 @@ export default function App() {
           onSaveText={(text) => api.updateAsset(project.id, preview.id, { text }).then(() => say('Texto salvo')).catch((e) => say(e.message))}
           onVersion={(assetId, index) => api.updateAsset(project.id, assetId, { current: index }).catch((e) => say(e.message))}
           onFix3d={fix3d}
+          onPaintImage={paintImage}
           agentBusy={running}
         />
       )}

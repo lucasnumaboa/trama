@@ -1136,7 +1136,11 @@ class TramaAnimate3D:
         info = next((l for l in out.splitlines() if l.startswith("TRAMA_ANIM")), "")
         print(f"[Trama] animação: {glb} ({info})")
         files = [{"filename": os.path.basename(glb), "subfolder": subfolder, "type": "output"}]
-        return {"ui": {"3d": files, "text": [info]}, "result": (os.path.relpath(glb, out_dir),)}
+        gif = _render_gif(glb, subfolder)
+        ui = {"3d": files, "text": [info]}
+        if gif:
+            ui["images"] = [gif]
+        return {"ui": ui, "result": (os.path.relpath(glb, out_dir),)}
 
 
 _GLB_TO_FBX_SCRIPT = r'''
@@ -1150,6 +1154,125 @@ if not any(o.type == "ARMATURE" for o in bpy.data.objects):
 bpy.ops.export_scene.fbx(filepath=dst, bake_anim=True, add_leaf_bones=False, path_mode="COPY", embed_textures=True)
 print("TRAMA_FBX ok")
 '''
+
+
+# Prévia em GIF de um GLB animado (Workbench do Blender, câmera em 3/4 pela frente do
+# personagem, chão claro). A frente vem da média da direção pé → ponta do pé em todos os
+# quadros, porque o retarget pode deixar o personagem olhando para qualquer lado.
+_GIF_SCRIPT = r'''
+import sys, os, math, shutil
+import bpy
+from mathutils import Vector
+
+src, out = [os.path.abspath(p) for p in sys.argv[-2:]]
+SIZE = 420
+FPS = 30
+STEP = 2  # 30 fps -> 15 fps no GIF
+
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.import_scene.gltf(filepath=src)
+scene = bpy.context.scene
+arm = next((o for o in scene.objects if o.type == "ARMATURE"), None)
+meshes = [o for o in scene.objects if o.type == "MESH"]
+if not meshes:
+    print("TRAMA_ERROR o GLB não tem malha")
+    sys.exit(2)
+act = arm.animation_data.action if arm and arm.animation_data else None
+f0, f1 = (int(act.frame_range[0]), int(act.frame_range[1])) if act else (1, 1)
+scene.frame_start, scene.frame_end = f0, f1
+
+lo = Vector((1e9, 1e9, 1e9)); hi = -lo
+for f in range(f0, f1 + 1, max(1, (f1 - f0) // 24 or 1)):
+    scene.frame_set(f)
+    dg = bpy.context.evaluated_depsgraph_get()
+    for m in meshes:
+        ev = m.evaluated_get(dg)
+        me = ev.to_mesh()
+        mw = ev.matrix_world
+        for v in list(me.vertices)[:: max(1, len(me.vertices) // 4000)]:
+            p = mw @ v.co
+            lo = Vector(map(min, lo, p)); hi = Vector(map(max, hi, p))
+        ev.to_mesh_clear()
+center = (lo + hi) / 2
+ext = hi - lo
+
+front = Vector((0, -1, 0))
+if arm:
+    pb = arm.pose.bones
+    acc = Vector((0, 0, 0))
+    for f in range(f0, f1 + 1, 3):
+        scene.frame_set(f)
+        for side_ in ("Left", "Right"):
+            fa, fb = pb.get("mixamorig:%sFoot" % side_), pb.get("mixamorig:%sToeBase" % side_)
+            if fa and fb:
+                d = (arm.matrix_world @ fb.head) - (arm.matrix_world @ fa.head)
+                acc += Vector((d.x, d.y, 0))
+    if acc.length > 1e-6:
+        front = acc.normalized()
+ang = math.radians(35)
+side = Vector((-front.y, front.x, 0))
+dirv = (front * math.cos(ang) + side * math.sin(ang)).normalized()
+dirv.z = 0.25
+dirv.normalize()
+
+cam_data = bpy.data.cameras.new("cam"); cam_data.type = "ORTHO"
+span = max(ext.x, ext.y, ext.z)
+cam_data.ortho_scale = span * 1.15
+cam = bpy.data.objects.new("cam", cam_data); scene.collection.objects.link(cam)
+cam.location = center + dirv * (span * 4)
+cam.rotation_euler = (center - cam.location).to_track_quat("-Z", "Y").to_euler()
+cam_data.clip_end = span * 20
+scene.camera = cam
+
+bpy.ops.mesh.primitive_plane_add(size=span * 6, location=(center.x, center.y, lo.z))
+floor_mat = bpy.data.materials.new("chao"); floor_mat.diffuse_color = (0.85, 0.85, 0.85, 1)
+bpy.context.object.data.materials.append(floor_mat)
+
+scene.render.engine = "BLENDER_WORKBENCH"
+sh = scene.display.shading
+sh.light = "STUDIO"
+sh.color_type = "TEXTURE"
+sh.show_shadows = True
+sh.show_cavity = False
+scene.display.shadow_shift = 0.1
+sh.background_type = "VIEWPORT"
+sh.background_color = (0.93, 0.93, 0.93)
+scene.render.resolution_x = scene.render.resolution_y = SIZE
+scene.render.resolution_percentage = 100
+scene.render.image_settings.file_format = "PNG"
+
+tmp = out + "_frames"
+os.makedirs(tmp, exist_ok=True)
+frames = []
+try:
+    for f in range(f0, f1 + 1, STEP):
+        scene.frame_set(f)
+        p = os.path.join(tmp, "%04d.png" % f)
+        scene.render.filepath = p
+        bpy.ops.render.render(write_still=True)
+        frames.append(p)
+    from PIL import Image
+    imgs = [Image.open(p).convert("RGB") for p in frames]
+    pal = [im.quantize(colors=128, method=Image.Quantize.MEDIANCUT) for im in imgs]
+    pal[0].save(out, save_all=True, append_images=pal[1:], duration=int(1000 * STEP / FPS), loop=0, optimize=True)
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)
+print("TRAMA_GIF %d quadros" % len(frames))
+'''
+
+
+def _render_gif(glb, subfolder):
+    """GIF ao lado do GLB (mesmo nome). Devolve o item de saída ou None se falhar."""
+    import os
+    gif = glb[:-4] + ".gif"
+    try:
+        _run_blender(_GIF_SCRIPT, [glb, gif], timeout=600)
+    except Exception as e:  # o card 3D sai mesmo sem a prévia
+        print(f"[Trama] GIF da animação não saiu: {e}")
+        return None
+    if not os.path.exists(gif):
+        return None
+    return {"filename": os.path.basename(gif), "subfolder": subfolder, "type": "output"}
 
 
 class TramaMotionToModel:
@@ -1213,7 +1336,11 @@ class TramaMotionToModel:
             print(f"[Trama] FBX do movimento não saiu: {e}")
         print(f"[Trama] movimento: {glb}")
         files = [{"filename": os.path.basename(glb), "subfolder": subfolder, "type": "output"}]
-        return {"ui": {"3d": files, "text": [motion_data.text]}, "result": (os.path.relpath(glb, out_dir),)}
+        gif = _render_gif(glb, subfolder)
+        ui = {"3d": files, "text": [motion_data.text]}
+        if gif:
+            ui["images"] = [gif]
+        return {"ui": ui, "result": (os.path.relpath(glb, out_dir),)}
 
 
 class TramaImageStyle:
@@ -1401,5 +1528,41 @@ class TramaLimitMetallic:
         return (metallic.clamp(max=float(limit)),)
 
 
-NODE_CLASS_MAPPINGS = {"TramaMatchVolume": TramaMatchVolume, "TramaAnalyzeAudio": TramaAnalyzeAudio, "TramaMixAudio": TramaMixAudio, "TramaAudioWindow": TramaAudioWindow, "TramaAceRepaint": TramaAceRepaint, "TramaRepaintSplice": TramaRepaintSplice, "TramaTranscribeAudio": TramaTranscribeAudio, "TramaLoadMesh": TramaLoadMesh, "TramaRiggedToGlb": TramaRiggedToGlb, "TramaContrastBackground": TramaContrastBackground, "TramaLimitMetallic": TramaLimitMetallic, "TramaImageStyle": TramaImageStyle, "TramaAnimate3D": TramaAnimate3D, "TramaMatchColor": TramaMatchColor, "TramaMotionToModel": TramaMotionToModel}
-NODE_DISPLAY_NAME_MAPPINGS = {"TramaMatchVolume": "Igualar volume (Trama)", "TramaAnalyzeAudio": "Analisar áudio (Trama)", "TramaMixAudio": "Juntar áudios (Trama)", "TramaAudioWindow": "Trecho para regerar (Trama)", "TramaAceRepaint": "Repaint do ACE-Step 1.5 (Trama)", "TramaRepaintSplice": "Colar trecho na música (Trama)", "TramaTranscribeAudio": "Transcrever voz (Trama)", "TramaLoadMesh": "Carregar modelo 3D (Trama)", "TramaRiggedToGlb": "Esqueleto: FBX para GLB (Trama)", "TramaContrastBackground": "Fundo com contraste para 3D (Trama)", "TramaLimitMetallic": "Limitar metal (Trama)", "TramaImageStyle": "Desenho chapado? (Trama)", "TramaAnimate3D": "Animar modelo 3D (Trama)", "TramaMatchColor": "Cor da textura igual à origem (Trama)", "TramaMotionToModel": "Movimento no modelo 3D (Trama)"}
+
+class TramaVideoMask:
+    """Máscara do personagem em cada quadro de um vídeo (remover fundo), em lotes.
+
+    O Remove Background do ComfyUI manda todos os quadros ao modelo de uma vez; com um
+    vídeo inteiro a GPU estoura (CUDA illegal memory access). Aqui vão poucos por vez e
+    as máscaras ficam na CPU.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "bg_removal_model": ("BACKGROUND_REMOVAL",),
+                "images": ("IMAGE",),
+                "batch": ("INT", {"default": 4, "min": 1, "max": 64, "tooltip": "Quadros por vez no modelo."}),
+            }
+        }
+
+    RETURN_TYPES = ("MASK",)
+    RETURN_NAMES = ("mask",)
+    FUNCTION = "mask"
+    CATEGORY = "Trama"
+
+    def mask(self, bg_removal_model, images, batch):
+        import torch
+        import comfy.utils
+        out = []
+        pbar = comfy.utils.ProgressBar(images.shape[0])
+        for i in range(0, images.shape[0], batch):
+            m = bg_removal_model.encode_image(images[i:i + batch])
+            out.append(m.float().cpu())
+            pbar.update(min(batch, images.shape[0] - i))
+        return (torch.cat(out, dim=0),)
+
+
+NODE_CLASS_MAPPINGS = {"TramaMatchVolume": TramaMatchVolume, "TramaAnalyzeAudio": TramaAnalyzeAudio, "TramaMixAudio": TramaMixAudio, "TramaAudioWindow": TramaAudioWindow, "TramaAceRepaint": TramaAceRepaint, "TramaRepaintSplice": TramaRepaintSplice, "TramaTranscribeAudio": TramaTranscribeAudio, "TramaLoadMesh": TramaLoadMesh, "TramaRiggedToGlb": TramaRiggedToGlb, "TramaContrastBackground": TramaContrastBackground, "TramaLimitMetallic": TramaLimitMetallic, "TramaImageStyle": TramaImageStyle, "TramaAnimate3D": TramaAnimate3D, "TramaMatchColor": TramaMatchColor, "TramaMotionToModel": TramaMotionToModel, "TramaVideoMask": TramaVideoMask}
+NODE_DISPLAY_NAME_MAPPINGS = {"TramaMatchVolume": "Igualar volume (Trama)", "TramaAnalyzeAudio": "Analisar áudio (Trama)", "TramaMixAudio": "Juntar áudios (Trama)", "TramaAudioWindow": "Trecho para regerar (Trama)", "TramaAceRepaint": "Repaint do ACE-Step 1.5 (Trama)", "TramaRepaintSplice": "Colar trecho na música (Trama)", "TramaTranscribeAudio": "Transcrever voz (Trama)", "TramaLoadMesh": "Carregar modelo 3D (Trama)", "TramaRiggedToGlb": "Esqueleto: FBX para GLB (Trama)", "TramaContrastBackground": "Fundo com contraste para 3D (Trama)", "TramaLimitMetallic": "Limitar metal (Trama)", "TramaImageStyle": "Desenho chapado? (Trama)", "TramaAnimate3D": "Animar modelo 3D (Trama)", "TramaMatchColor": "Cor da textura igual à origem (Trama)", "TramaMotionToModel": "Movimento no modelo 3D (Trama)", "TramaVideoMask": "Máscara do vídeo em lotes (Trama)"}

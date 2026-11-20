@@ -460,6 +460,13 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 .kind-model3d .card-label .icon { color: var(--k-model3d); }
 .kind-model3d .card-body { background: radial-gradient(110% 90% at 50% 20%, #2a2a31, #141417 70%); }
 .model-thumb { display: block; width: 100%; height: auto; aspect-ratio: 1; --poster-color: transparent; }
+.image-painter { display: flex; flex-direction: column; gap: 10px; }
+.image-painter-stage { position: relative; align-self: center; display: flex; max-width: 100%; }
+.image-painter-stage img { display: block; }
+.image-painter-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; border-radius: 12px; opacity: 0.5; }
+.image-painter.is-painting .image-painter-stage img { outline: 2px solid #ff4d4d; outline-offset: -2px; }
+.image-painter-brush { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.image-painter-brush input { width: 110px; }
 .model-viewer-wrap { display: flex; flex-direction: column; gap: 10px; }
 .model-full { width: 100%; height: min(70vh, 640px); border-radius: 12px; background: radial-gradient(110% 90% at 50% 20%, #34343c, #16161a 70%); --poster-color: transparent; }
 .model-viewer-wrap.is-pointing .model-full { cursor: crosshair; outline: 2px solid #ff4d4d; outline-offset: -2px; }

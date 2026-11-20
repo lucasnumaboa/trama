@@ -6,10 +6,11 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import * as comfy from './comfy.js';
+import { subtitleBlocks, buildAss } from './subtitles.js';
 
-export function run(cmd, args, signal) {
+export function run(cmd, args, signal, { cwd } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { windowsHide: true });
+    const child = spawn(cmd, args, { windowsHide: true, cwd });
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => (out += d));
@@ -235,11 +236,11 @@ export async function mediaInfo(file, kind) {
 }
 
 export const OPERATIONS = [
-  'concat_videos', 'add_audio', 'extract_audio', 'trim', 'trim_silence', 'resize', 'reformat', 'crop_borders', 'compress',
-  'change_fps', 'speed', 'fade', 'volume', 'mute', 'loop', 'convert',
+  'concat_videos', 'concat_audios', 'add_audio', 'extract_audio', 'trim', 'trim_silence', 'resize', 'reformat', 'crop_borders', 'compress',
+  'change_fps', 'speed', 'fade', 'volume', 'mute', 'loop', 'convert', 'subtitles',
 ];
 // Operações que transformam um único arquivo (o resultado é outra versão dele).
-export const SINGLE_INPUT_OPS = new Set(['trim', 'trim_silence', 'resize', 'reformat', 'crop_borders', 'compress', 'change_fps', 'speed', 'fade', 'volume', 'mute', 'loop', 'convert']);
+export const SINGLE_INPUT_OPS = new Set(['trim', 'trim_silence', 'resize', 'reformat', 'crop_borders', 'compress', 'change_fps', 'speed', 'fade', 'volume', 'mute', 'loop', 'convert', 'subtitles']);
 
 /** Resultado de "nada a fazer": a operação não mudaria o arquivo para melhor. */
 export class NoChange extends Error {}
@@ -265,6 +266,9 @@ function atempoChain(factor) {
   parts.push(`atempo=${f.toFixed(4)}`);
   return parts.join(',');
 }
+
+const WINDIR = process.env.WINDIR || 'C:/Windows';
+const SUBTITLE_FONTS = ['arial.ttf', 'arialbd.ttf'].map((f) => path.join(WINDIR, 'Fonts', f));
 
 export const VIDEO_ENC = ['-c:v', 'libx264', '-crf', '18', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-movflags', '+faststart'];
 
@@ -302,6 +306,40 @@ async function editIn(dir, op, assets, o, signal) {
       return publish(target);
     };
     const imageExt = () => (path.extname(a0.file.filename).slice(1).toLowerCase() === 'jpg' ? 'jpg' : 'png');
+
+    if (op === 'subtitles') {
+      need(isVideo, 'subtitles é só para vídeo');
+      need(Array.isArray(o.segments) && o.segments.length, 'subtitles precisa das frases (segments) com início, fim e texto');
+      const info = await probe(src);
+      const blocks = subtitleBlocks(o.segments, { maxChars: Number(o.max_chars) || (info.width < info.height ? 28 : 42) });
+      need(blocks.length, 'não há texto para legendar');
+      fs.writeFileSync(path.join(dir, 'legenda.ass'), buildAss(blocks, { width: info.width, height: info.height, position: o.position, fontSize: o.font_size, color: o.color, box: o.box }), 'utf8');
+      // O libass deste ffmpeg não acha as fontes do Windows sozinho: a fonte vai junto, na
+      // pasta da edição, e os caminhos do filtro ficam relativos (o ":" de "C:" quebra o filtro).
+      const fonts = path.join(dir, 'fonts');
+      fs.mkdirSync(fonts);
+      for (const f of SUBTITLE_FONTS) if (fs.existsSync(f)) fs.copyFileSync(f, path.join(fonts, path.basename(f)));
+      const target = out('mp4');
+      await run('ffmpeg', ['-y', '-hide_banner', '-i', src, '-vf', 'subtitles=legenda.ass:fontsdir=fonts', ...VIDEO_ENC, '-c:a', 'copy', target], signal, { cwd: dir });
+      return publish(target);
+    }
+
+    if (op === 'concat_audios') {
+      need(assets.length >= 2 && assets.every((a) => a.kind === 'audio' || a.kind === 'video'), 'concat_audios precisa de 2 ou mais áudios');
+      // gap: segundos de silêncio entre um e outro (padrão 0,3).
+      // starts: segundo em que cada áudio começa (linha do tempo, ex.: falas de uma dublagem
+      // nos tempos da fala original). Sem starts, um depois do outro com gap de silêncio.
+      if (Array.isArray(o.starts) && o.starts.length) {
+        need(o.starts.length === locals.length, `starts precisa de ${locals.length} tempos, um por áudio`);
+        const parts = locals.map((_, i) => `[${i}:a]aresample=44100,aformat=channel_layouts=stereo,adelay=${Math.max(0, Math.round(Number(o.starts[i]) * 1000))}:all=1[a${i}]`).join(';');
+        const graph = `${parts};${locals.map((_, i) => `[a${i}]`).join('')}amix=inputs=${locals.length}:duration=longest:dropout_transition=0:normalize=0[a]`;
+        return ffmpeg([...locals.flatMap((l) => ['-i', l]), '-filter_complex', graph, '-map', '[a]', '-c:a', 'libmp3lame', '-q:a', '2'], 'mp3');
+      }
+      const gap = Math.max(0, Number.isFinite(Number(o.gap)) ? Number(o.gap) : 0.3);
+      const parts = locals.map((_, i) => `[${i}:a]aresample=44100,aformat=channel_layouts=stereo${gap && i < locals.length - 1 ? `,apad=pad_dur=${gap}` : ''}[a${i}]`).join(';');
+      const graph = `${parts};${locals.map((_, i) => `[a${i}]`).join('')}concat=n=${locals.length}:v=0:a=1[a]`;
+      return ffmpeg([...locals.flatMap((l) => ['-i', l]), '-filter_complex', graph, '-map', '[a]', '-c:a', 'libmp3lame', '-q:a', '2'], 'mp3');
+    }
 
     if (op === 'concat_videos') {
       need(assets.length >= 2 && assets.every((a) => a.kind === 'video'), 'concat_videos precisa de 2 ou mais vídeos');

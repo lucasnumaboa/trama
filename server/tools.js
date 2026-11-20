@@ -24,9 +24,9 @@ const KIND_PLURAL = { image: 'imagens', video: 'vídeos', audio: 'áudios', text
 const plural = (n, kind) => (n === 1 ? `1 ${KIND_PT[kind] || kind}` : `${n} ${KIND_PLURAL[kind] || kind}`);
 const clip = (s, n) => (s && s.length > n ? `${s.slice(0, n)}…` : s);
 const OP_LABEL = {
-  concat_videos: 'Juntou vídeos', add_audio: 'Colocou áudio', extract_audio: 'Extraiu o áudio', trim: 'Cortou', resize: 'Redimensionou',
+  concat_videos: 'Juntou vídeos', concat_audios: 'Juntou áudios', add_audio: 'Colocou áudio', extract_audio: 'Extraiu o áudio', trim: 'Cortou', resize: 'Redimensionou',
   reformat: 'Mudou o formato', compress: 'Comprimiu', change_fps: 'Mudou o fps', speed: 'Mudou a velocidade', fade: 'Aplicou fade',
-  volume: 'Ajustou o volume', mute: 'Tirou o som', loop: 'Repetiu até a duração', convert: 'Converteu',
+  volume: 'Ajustou o volume', mute: 'Tirou o som', loop: 'Repetiu até a duração', convert: 'Converteu', subtitles: 'Pôs legenda',
 };
 
 export const TOOL_SCHEMAS = [
@@ -87,6 +87,7 @@ export const TOOL_SCHEMAS = [
     name: 'edit_media',
     description: `Edição local e rápida com ffmpeg (não usa a GPU). Operações:
 - concat_videos: junta vídeos na ordem (asset_ids com 2+ vídeos). Resultado é um card novo.
+- concat_audios: junta áudios na ordem (asset_ids com 2+ áudios), com gap segundos de silêncio entre eles (padrão 0.3). Com starts (um número por áudio), põe cada um no segundo indicado, numa linha do tempo (dublagem: cada fala no tempo da original). Card novo.
 - add_audio: põe um áudio num vídeo (asset_ids = [vídeo, áudio]); mode "replace" troca o som, "mix" mistura; volume do áudio novo. Card novo.
 - extract_audio: tira o áudio de um vídeo. Card novo.
 - trim: corta entre start e end (segundos).
@@ -97,6 +98,7 @@ export const TOOL_SCHEMAS = [
 - compress: diminui o arquivo: target_mb ou crf (18 melhor, 28 padrão, 35 menor); imagem vira jpg; áudio usa audio_kbps. Se já estiver abaixo do alvo ou não diminuir, nada muda.
 - change_fps: fps. speed: factor (2 = 2x mais rápido, 0.5 = câmera lenta). fade: fade_in/fade_out em segundos. volume: volume (fator). mute: tira o som. loop: repete até duration segundos.
 - convert: format mp4, webm, gif, mp3, wav, png, jpg, webp.
+- subtitles: queima a legenda da fala no vídeo (vídeo com voz). Sem segments, transcreve sozinho (language ajuda; a voz é separada da música antes) e devolve os segments usados. Para legenda traduzida ou corrigida, passe segments [{start, end, text}] (ex.: os de uma chamada anterior com o texto traduzido). position bottom|top|middle, font_size em px, color "#rrggbb", box true (faixa escura atrás), max_chars por linha.
 Nas operações de um arquivo só, o resultado vira uma NOVA VERSÃO do mesmo card (as_version=true, padrão). Use as_version=false para criar um card separado.`,
     parameters: {
       type: 'object',
@@ -115,7 +117,10 @@ Nas operações de um arquivo só, o resultado vira uma NOVA VERSÃO do mesmo ca
         aspect: { type: 'string' }, mode: { type: 'string', description: 'reformat: crop|pad|blur; add_audio: replace|mix' }, color: { type: 'string' },
         target_mb: { type: 'number' }, crf: { type: 'number' }, quality: { type: 'number' }, audio_kbps: { type: 'number' },
         fps: { type: 'number' }, factor: { type: 'number' }, fade_in: { type: 'number' }, fade_out: { type: 'number' },
-        volume: { type: 'number' }, duration: { type: 'number' }, format: { type: 'string' },
+        volume: { type: 'number' }, duration: { type: 'number' }, format: { type: 'string' }, gap: { type: 'number', description: 'concat_audios: silêncio entre os áudios, em segundos' }, starts: { type: 'array', items: { type: 'number' }, description: 'concat_audios: segundo em que cada áudio começa' },
+        segments: { type: 'array', items: { type: 'object', properties: { start: { type: 'number' }, end: { type: 'number' }, text: { type: 'string' } }, required: ['start', 'end', 'text'] }, description: 'subtitles: frases da legenda com tempos em segundos' },
+        language: { type: 'string', enum: ['auto', 'portuguese', 'english', 'spanish', 'japanese', 'french', 'italian', 'german', 'korean', 'chinese'], description: 'subtitles: idioma da fala, para a transcrição' },
+        position: { type: 'string', enum: ['bottom', 'top', 'middle'] }, font_size: { type: 'number' }, box: { type: 'boolean' }, max_chars: { type: 'number' },
       },
       required: ['operation', 'asset_ids'],
     },
@@ -882,10 +887,29 @@ async function edit(ctx, args) {
   if (assets.some((a) => !a.file)) throw new Error('Todos os assets precisam ser arquivos de mídia');
   if (assets.some((a) => a.status === 'generating')) throw new Error('Espere o card terminar de gerar antes de editar');
   const op = args.operation;
+  let transcribed = null;
+  if (op === 'subtitles' && !(Array.isArray(args.segments) && args.segments.length)) {
+    const a = assets[0];
+    if (a.kind !== 'video') throw new Error('subtitles é só para vídeo');
+    const language = args.language || 'auto';
+    const key = `${a.file.subfolder || ''}/${a.file.filename}|true|${language}`;
+    let report = a.audioInfo?.key === key ? a.audioInfo.report : null;
+    if (!report?.transcript) {
+      ctx.step({ label: `Transcrevendo a fala de "${a.title}"`, assetIds: [a.id] });
+      report = await analyzeAudio(a, { separate: true, lyrics: true, language, signal: ctx.signal });
+      updateAsset(p, a.id, { audioInfo: { key, report } }, { persist: true });
+    }
+    const segs = (report.transcript?.segments || []).filter((x) => String(x.text || '').trim());
+    if (!segs.length) throw new Error(`Não encontrei fala para legendar em "${a.title}".`);
+    args = { ...args, segments: segs };
+    transcribed = segs.map(({ start, end, text }) => ({ start, end, text }));
+  }
   const single = SINGLE_INPUT_OPS.has(op) && assets.length === 1;
   const wantVersion = single && args.as_version !== false;
   const opts = { ...args };
-  const recipe = { tool: 'edit_media', operation: op, inputs: assets.map((a) => a.id), options: Object.fromEntries(Object.entries(args).filter(([k]) => !['operation', 'asset_ids', 'as_version', 'title', 'note'].includes(k))) };
+  const recipe = { tool: 'edit_media', operation: op, inputs: assets.map((a) => a.id), options: Object.fromEntries(Object.entries(args).filter(([k]) => !['operation', 'asset_ids', 'as_version', 'title', 'note', 'segments'].includes(k))) };
+  // A receita guarda as frases sem o tempo de cada palavra (bastam para refazer a legenda).
+  if (op === 'subtitles') recipe.options.segments = transcribed || args.segments.map(({ start, end, text }) => ({ start, end, text }));
   const label = OP_LABEL[op] || op;
 
   // Para avisar quando o áudio colocado é mais longo que o vídeo.
@@ -952,8 +976,8 @@ async function edit(ctx, args) {
     }
   }
 
-  const outKind = op === 'extract_audio' ? 'audio' : assets[0].kind;
-  const title = args.title || { concat_videos: 'Vídeos juntos', add_audio: 'Vídeo com áudio', extract_audio: 'Áudio extraído' }[op] || `${assets[0].title} (${label.toLowerCase()})`;
+  const outKind = op === 'extract_audio' || op === 'concat_audios' ? 'audio' : assets[0].kind;
+  const title = args.title || { concat_videos: 'Vídeos juntos', concat_audios: 'Áudios juntos', add_audio: 'Vídeo com áudio', extract_audio: 'Áudio extraído' }[op] || `${assets[0].title} (${label.toLowerCase()})`;
   const placeholder = addAsset(p, { kind: outKind, title, status: 'generating', detail: `${label}…`, origin: op }, assets.map((a) => a.id));
   saveProject(p);
   ctx.step({ label: `${label}…`, assetIds: [placeholder.id] });
@@ -1036,8 +1060,16 @@ export async function runTool(name, args, ctx) {
       });
     }
 
-    case 'edit_media':
-      return edit(ctx, args);
+    case 'edit_media': {
+      const out = await edit(ctx, args);
+      // Legenda: devolve as frases usadas, para o agente traduzir ou corrigir e refazer.
+      if (args.operation === 'subtitles' && out.result && !out.result.unchanged) {
+        const a = out.assetIds?.[0] && p.assets?.find?.((x) => x.id === out.assetIds[0]);
+        const r = a?.versions?.[a.versions.length - 1]?.recipe || a?.recipe;
+        if (r?.options?.segments) out.result.segments = r.options.segments;
+      }
+      return out;
+    }
 
     case 'define_character': {
       const a = findAsset(p, args.asset_id);
