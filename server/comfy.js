@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getSettings } from './settings.js';
+import { getSettings, DATA_DIR } from './settings.js';
 
 const base = () => getSettings().comfyUrl;
 
@@ -95,9 +95,30 @@ export async function fetchFile({ filename, subfolder = '', type = 'output' }) {
 // ---- Arquivo no disco (para "Mostrar na pasta") ------------------------------
 // O ComfyUI não informa as pastas de saída, mas informa a de custom_nodes: a base é a
 // pasta acima dela. --output-directory e afins, se usados, valem mais.
+// As pastas ficam guardadas em data/comfy-dirs.json: com o ComfyUI ocupado, lento ou
+// fechado, o Trama ainda acha os arquivos no disco (miniaturas e cards abrem na hora).
 let dirsCache = null;
+const DIRS_FILE = () => path.join(DATA_DIR, 'comfy-dirs.json');
+function savedDirs() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(DIRS_FILE(), 'utf8'));
+    return saved.url === base() ? saved.value : null;
+  } catch {
+    return null;
+  }
+}
 async function comfyDirs() {
   if (dirsCache && Date.now() - dirsCache.at < 60000) return dirsCache.value;
+  try {
+    return await freshDirs();
+  } catch (error) {
+    const value = dirsCache?.value || savedDirs();
+    if (!value) throw error;
+    dirsCache = { at: Date.now(), value };
+    return value;
+  }
+}
+async function freshDirs() {
   const [paths, stats] = await Promise.all([folderPaths(), systemStats()]);
   const customNodes = paths.custom_nodes?.[0];
   if (!customNodes) throw new Error('O ComfyUI não informou as pastas dele.');
@@ -117,6 +138,10 @@ async function comfyDirs() {
     temp: arg('--temp-directory') || path.join(base, 'temp'),
   };
   dirsCache = { at: Date.now(), value };
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(DIRS_FILE(), JSON.stringify({ url: getSettings().comfyUrl, value }));
+  } catch {}
   return value;
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, fileUrl } from './api.js';
+import { api, thumbUrl } from './api.js';
 import { Icon } from './ui.jsx';
 
 function ago(iso) {
@@ -142,7 +142,7 @@ export default function Sidebar({ projects, folders = [], currentId, onSelect, o
       }}
     >
       <span className="project-thumb">
-        {p.cover?.kind === 'image' ? <img src={fileUrl(p.cover.file)} alt="" /> : <Icon name={p.cover?.kind || 'chat'} size={14} />}
+        {p.cover?.kind === 'image' ? <img src={thumbUrl(p.cover.file)} alt="" /> : <Icon name={p.cover?.kind || 'chat'} size={14} />}
       </span>
       <span className="project-text">
         {editing?.kind === 'project' && editing.id === p.id ? (

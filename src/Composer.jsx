@@ -1,16 +1,15 @@
 // Caixa de mensagem: anexos (colar, arrastar, botão +, cards selecionados),
 // referências clicáveis dentro do texto e o seletor de modelos.
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { api, fileUrl } from './api.js';
-import { Icon } from './ui.jsx';
+import { api, thumbUrl } from './api.js';
+import { Icon, ThumbImg } from './ui.jsx';
 import ModelPicker from './ModelPicker.jsx';
 import { cleanUrl, linkInfo, linkPreview, splitUrls } from './links.js';
 
 const isMediaFile = (f) => /^(image|video|audio)\//.test(f.type);
 
 function Thumb({ asset, size = 22 }) {
-  if (asset.kind === 'image' && asset.file) return <img src={fileUrl(asset.file)} alt="" style={{ width: size, height: size }} />;
-  if (asset.kind === 'video' && asset.file) return <video src={`${fileUrl(asset.file)}#t=0.1`} muted preload="metadata" style={{ width: size, height: size }} />;
+  if ((asset.kind === 'image' || asset.kind === 'video') && asset.file) return <ThumbImg file={asset.file} style={{ width: size, height: size }} />;
   return (
     <span className="thumb-icon" style={{ width: size, height: size }}>
       <Icon name={asset.kind} size={Math.round(size * 0.6)} />
@@ -26,7 +25,7 @@ function makeChip(asset) {
   chip.dataset.asset = asset.id;
   if (asset.kind === 'image' && asset.file) {
     const img = document.createElement('img');
-    img.src = fileUrl(asset.file);
+    img.src = thumbUrl(asset.file);
     chip.appendChild(img);
   }
   const label = document.createElement('span');

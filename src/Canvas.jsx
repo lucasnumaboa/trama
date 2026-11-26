@@ -4,7 +4,7 @@ import '@xyflow/react/dist/style.css';
 import { api, fileUrl, downloadFile } from './api.js';
 // O visualizador 3D (three.js) só carrega quando aparece um card 3D.
 const ModelThumb = lazy(() => import('./Model3D.jsx').then((m) => ({ default: m.ModelThumb })));
-import { Icon, KIND_LABEL } from './ui.jsx';
+import { Icon, KIND_LABEL, ThumbImg } from './ui.jsx';
 import { getVolume, saveVolume } from './volume.js';
 
 function VersionSwitch({ asset, onVersion }) {
@@ -36,8 +36,11 @@ const fmtDuration = (s) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String
  * Sem os controles nativos no card: eles capturavam o clique e o card não arrastava.
  * O player completo abre no duplo clique.
  */
-function VideoBody({ url }) {
+function VideoBody({ url, file }) {
   const ref = useRef(null);
+  // Miniatura da pasta do app por cima até a primeira vez que passa o mouse.
+  const [poster, setPoster] = useState(true);
+  const [played, setPlayed] = useState(false);
   const [duration, setDuration] = useState(null);
   const [hover, setHover] = useState(false);
   const [muted, setMuted] = useState(true);
@@ -60,6 +63,7 @@ function VideoBody({ url }) {
   };
   const enter = () => {
     setHover(true);
+    setPlayed(true);
     ref.current?.play().catch(() => {});
   };
   const leave = () => {
@@ -72,9 +76,10 @@ function VideoBody({ url }) {
   };
   return (
     <div className="video-wrap" onMouseEnter={enter} onMouseLeave={leave}>
+      {poster && !played && <ThumbImg file={file} className="video-poster" onFail={() => setPoster(false)} />}
       <video
         ref={ref}
-        src={`${url}#t=0.1`}
+        src={poster ? url : `${url}#t=0.1`}
         muted={muted}
         loop
         playsInline
@@ -125,7 +130,7 @@ const AssetCard = memo(function AssetCard({ data, selected }) {
     const pct = Math.round((asset.progress || 0) * 100);
     body = (
       <div className="card-busy">
-        {asset.kind === 'image' ? <img src={url} alt="" draggable={false} /> : asset.kind === 'video' ? <video src={`${url}#t=0.1`} muted preload="metadata" /> : <div className="card-audio"><Icon name={asset.kind} size={28} /></div>}
+        {asset.kind === 'image' || asset.kind === 'video' ? <ThumbImg file={asset.file} /> : <div className="card-audio"><Icon name={asset.kind} size={28} /></div>}
         <div className="busy-overlay">
           <div className="spinner" />
           <div className="gen-label">{asset.detail || 'Criando nova versão'}</div>
@@ -157,9 +162,9 @@ const AssetCard = memo(function AssetCard({ data, selected }) {
         <span>{asset.error || 'Falhou'}</span>
       </div>
     );
-  } else if (asset.kind === 'image') body = <img src={url} alt={asset.title} draggable={false} />;
+  } else if (asset.kind === 'image') body = <ThumbImg file={asset.file} alt={asset.title} />;
   // "#t=0.1" faz o navegador desenhar um quadro de verdade como miniatura.
-  else if (asset.kind === 'video') body = <VideoBody url={url} />;
+  else if (asset.kind === 'video') body = <VideoBody url={url} file={asset.file} />;
   else if (asset.kind === 'audio')
     body = (
       <div className="card-audio">
@@ -192,7 +197,7 @@ const AssetCard = memo(function AssetCard({ data, selected }) {
 const nodeTypes = { asset: AssetCard };
 
 export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId }) {
-  const { screenToFlowPosition, fitView, setCenter, getNode, zoomIn, zoomOut } = useReactFlow();
+  const { screenToFlowPosition, fitView, setCenter, getNode, zoomIn, zoomOut, setViewport } = useReactFlow();
   const { zoom } = useViewport();
   const [nodes, setNodes] = useState([]);
   const [showMap, setShowMap] = useState(false);
@@ -284,6 +289,13 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
     if (n) setCenter(n.position.x + 130, n.position.y + 170, { zoom: 0.9, duration: 400 });
   }, [focusId, getNode, setCenter]);
 
+  // Centralizar: encaixa todos os cards na tela. Se a visão se perdeu (zoom ou posição
+  // inválidos depois de um travamento), volta para o começo antes de encaixar.
+  const centerAll = useCallback(() => {
+    setViewport({ x: 0, y: 0, zoom: 1 });
+    requestAnimationFrame(() => fitView({ padding: 0.2, maxZoom: 1, duration: 300 }));
+  }, [fitView, setViewport]);
+
   const edges = useMemo(
     () =>
       (project?.edges || []).map((e) => {
@@ -357,16 +369,19 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
   // Delete/Backspace remove os cards selecionados; Ctrl+Z traz de volta.
   // Fora do canvas (digitando no chat, numa janela aberta) as teclas seguem normais.
   const keyActions = useRef({});
-  keyActions.current = { deleteSelected, undoDelete, hasSelection: selectedIds.length > 0 };
+  keyActions.current = { deleteSelected, undoDelete, centerAll, hasSelection: selectedIds.length > 0 };
   useEffect(() => {
     const onKey = (e) => {
       const t = e.target;
       if (t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
       if (document.querySelector('.modal-backdrop')) return;
-      const { deleteSelected, undoDelete, hasSelection } = keyActions.current;
+      const { deleteSelected, undoDelete, centerAll, hasSelection } = keyActions.current;
       if ((e.key === 'Delete' || e.key === 'Backspace') && hasSelection && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         deleteSelected();
+      } else if (e.key.toLowerCase() === 'c' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        centerAll();
       } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         undoDelete();
@@ -440,15 +455,15 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
         <button className="tool-btn" title="Afastar" onClick={() => zoomOut({ duration: 200 })}>
           <Icon name="zoomOut" size={15} />
         </button>
-        <button className="zoom-pct" title="Ver tudo" onClick={() => fitView({ padding: 0.2, duration: 300 })}>
+        <button className="zoom-pct" title="Centralizar o workflow (C)" onClick={centerAll}>
           {Math.round(zoom * 100)}%
         </button>
         <button className="tool-btn" title="Aproximar" onClick={() => zoomIn({ duration: 200 })}>
           <Icon name="zoomIn" size={15} />
         </button>
         <span className="tool-sep" />
-        <button className="tool-btn" title="Ver tudo" onClick={() => fitView({ padding: 0.2, duration: 300 })}>
-          <Icon name="fit" size={15} />
+        <button className="tool-btn" title="Centralizar o workflow (C)" onClick={centerAll}>
+          <Icon name="center" size={15} />
         </button>
         <button className={`tool-btn ${showMap ? 'on' : ''}`} title="Minimapa" onClick={() => setShowMap((v) => !v)}>
           <Icon name="map" size={15} />
@@ -462,6 +477,9 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
         <span className="dock-sep" />
         <button className="dock-btn on" title="Selecionar (arraste para marcar vários)">
           <Icon name="pointer" size={16} />
+        </button>
+        <button className="dock-btn" title="Centralizar o workflow (C)" onClick={centerAll} disabled={!project}>
+          <Icon name="center" size={16} />
         </button>
         <button className="dock-btn" title="Remover selecionados (Delete) · Ctrl+Z desfaz" onClick={() => deleteSelected()} disabled={!selectedIds.length}>
           <Icon name="trash" size={16} />
@@ -513,7 +531,7 @@ export default function Canvas({ project, onOpen, selectedIds, onSelect, focusId
       })()}
       {notice && <div className="canvas-notice">{notice}</div>}
 
-      <div className="canvas-hint">Arraste para selecionar · role para mover · Ctrl + rolar para zoom · duplo clique abre · botão direito: baixar e pasta · Delete remove · Ctrl+Z desfaz</div>
+      <div className="canvas-hint">Arraste para selecionar · role para mover · Ctrl + rolar para zoom · duplo clique abre · botão direito: baixar e pasta · C centraliza · Delete remove · Ctrl+Z desfaz</div>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { fileUrl } from './api.js';
+import { thumbUrl } from './api.js';
 import { Icon, RichText, KIND_LABEL } from './ui.jsx';
 import Composer, { Thumb } from './Composer.jsx';
 import { linkInfo, linkPreview, splitUrls } from './links.js';
@@ -58,7 +58,7 @@ function UserText({ text, assets, onFocus }) {
         const a = assets.find((x) => x.id === m[1]);
         return a ? (
           <span key={i} className={`ref-chip ref-${a.kind}`} onClick={() => onFocus(a.id)}>
-            {a.kind === 'image' && a.file && <img src={fileUrl(a.file)} alt="" />}
+            {a.kind === 'image' && a.file && <img src={thumbUrl(a.file)} alt="" />}
             <span>{a.title}</span>
           </span>
         ) : (

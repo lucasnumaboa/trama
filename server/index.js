@@ -8,7 +8,8 @@ import { spawn } from 'node:child_process';
 import * as comfy from './comfy.js';
 import { describeByName } from './exec.js';
 import { listModels } from './llm.js';
-import { publicSettings, updateSettings } from './settings.js';
+import { publicSettings, updateSettings, DATA_DIR } from './settings.js';
+import { thumbPath, pruneThumbs } from './thumbs.js';
 import { listCapabilities, setDefaultModel, addModel, removeModel, modelInCategory } from './capabilities.js';
 import * as projects from './projects.js';
 import { exportModel, EXPORT_FORMATS } from './model3d.js';
@@ -118,11 +119,21 @@ app.get('/api/comfy/workflows', wrap(async (req, res) => {
   res.json({ workflows: out });
 }));
 app.get('/api/comfy/view', wrap(async (req, res) => {
-  const upstream = await comfy.fetchFile({
+  const file = {
     filename: String(req.query.filename || ''),
     subfolder: String(req.query.subfolder || ''),
     type: String(req.query.type || 'output'),
-  });
+  };
+  // ComfyUI neste computador: lê direto do disco (não espera o ComfyUI, que pode estar
+  // ocupado gerando, e aceita pular para qualquer ponto do vídeo).
+  const local = await comfy.localPathOf(file).catch(() => null);
+  if (local) {
+    const name = path.basename(file.filename);
+    const opts = { maxAge: 86400000, headers: { 'Cache-Control': 'private, max-age=86400' } };
+    if (req.query.download) return res.download(local, name, opts);
+    return res.sendFile(local, opts);
+  }
+  const upstream = await comfy.fetchFile(file);
   for (const h of ['content-type', 'content-length', 'content-disposition']) {
     const v = upstream.headers.get(h);
     if (v) res.setHeader(h, v);
@@ -139,6 +150,27 @@ app.get('/api/comfy/view', wrap(async (req, res) => {
     if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') console.error('[GET /api/comfy/view]', error.message);
   });
 }));
+
+// Miniatura do card (data/thumbs): sai do disco sem esperar o ComfyUI.
+app.get('/api/thumb', wrap(async (req, res) => {
+  const file = {
+    filename: path.basename(String(req.query.filename || '')),
+    subfolder: String(req.query.subfolder || ''),
+    type: String(req.query.type || 'output'),
+  };
+  if (!file.filename || !['output', 'input', 'temp'].includes(file.type)) return res.status(400).json({ error: 'Arquivo inválido.' });
+  const p = await thumbPath(file);
+  res.sendFile(p, { maxAge: 604800000, headers: { 'Cache-Control': 'private, max-age=604800, immutable' } });
+}));
+
+// Erros da interface (tela que travou): ficam em data/erros-interface.log para achar a causa.
+app.post('/api/client-error', (req, res) => {
+  const { message = '', stack = '', where = '' } = req.body || {};
+  const line = `[${new Date().toISOString()}] ${String(where).slice(0, 80)}: ${String(message).slice(0, 500)}\n${String(stack).slice(0, 4000)}\n\n`;
+  console.error('[interface]', where, message);
+  fs.appendFile(path.join(DATA_DIR, 'erros-interface.log'), line, () => {});
+  res.json({ ok: true });
+});
 
 // Exporta um modelo 3D (GLB do ComfyUI) em GLB, STL ou OBJ. ?height=mm escala o STL/OBJ
 // para impressão (Z para cima, no chão); sem height o OBJ fica nas unidades do GLB.
@@ -312,6 +344,13 @@ export const ready = new Promise((resolve, reject) => {
   const server = app.listen(PORT, '127.0.0.1', () => {
     console.log(`Trama rodando em http://127.0.0.1:${PORT}`);
     resolve(PORT);
+    setTimeout(() => {
+      try {
+        pruneThumbs();
+      } catch (error) {
+        console.error('[miniaturas]', error.message);
+      }
+    }, 30000);
   });
   server.on('error', reject);
 });

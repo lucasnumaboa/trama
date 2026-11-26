@@ -57,6 +57,21 @@ export const api = {
 export const fileUrl = (f) =>
   f ? `/api/comfy/view?${new URLSearchParams({ filename: f.filename, subfolder: f.subfolder || '', type: f.type || 'output' })}` : '';
 
+/** Miniatura do card guardada na pasta do app (não espera o ComfyUI). */
+export const thumbUrl = (f) =>
+  f ? `/api/thumb?${new URLSearchParams({ filename: f.filename, subfolder: f.subfolder || '', type: f.type || 'output' })}` : '';
+
+/** Manda um erro da interface para data/erros-interface.log. */
+export function reportError(error, where = '') {
+  try {
+    fetch('/api/client-error', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: error?.message || String(error), stack: error?.stack || '', where }),
+    }).catch(() => {});
+  } catch {}
+}
+
 /** Baixa o arquivo (o servidor manda como anexo; no app de desktop abre "Salvar como"). */
 export function downloadFile(f) {
   if (!f) return;

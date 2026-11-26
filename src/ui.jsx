@@ -1,5 +1,6 @@
 // Peças pequenas reaproveitadas: ícones, texto com formatação simples.
-import { Fragment } from 'react';
+import { Component, Fragment, useState } from 'react';
+import { fileUrl, thumbUrl, reportError } from './api.js';
 
 const PATHS = {
   image: 'M4 5h16v14H4z M4 16l5-5 4 4 3-3 4 4 M15 9.5a1.5 1.5 0 1 0 0-.01',
@@ -42,6 +43,7 @@ const PATHS = {
   folderPlus: 'M4 7h6l2 2h8v9H4z M12 11.5v5 M9.5 14h5',
   folderOut: 'M4 7h6l2 2h8v9H4z M15 13.5H9 M11.5 11L9 13.5l2.5 2.5',
   swap: 'M7 7h11 M15 4l3 3-3 3 M17 17H6 M9 14l-3 3 3 3',
+  center: 'M5 5h14v14H5z M12 9.5v5 M9.5 12h5',
 };
 
 export function Icon({ name, size = 16, className = '', title }) {
@@ -51,6 +53,65 @@ export function Icon({ name, size = 16, className = '', title }) {
       <path d={PATHS[name] || PATHS.file} />
     </svg>
   );
+}
+
+/**
+ * Miniatura de imagem ou vídeo pela pasta do app. Se ela não sair (arquivo ainda
+ * não está no disco, sem ffmpeg), mostra a imagem original; num vídeo, chama onFail.
+ */
+export function ThumbImg({ file, alt = '', onFail, ...rest }) {
+  const [failed, setFailed] = useState(false);
+  if (!file) return null;
+  if (failed && onFail) return null;
+  return (
+    <img
+      {...rest}
+      src={failed ? fileUrl(file) : thumbUrl(file)}
+      alt={alt}
+      draggable={false}
+      onError={() => {
+        if (failed) return;
+        setFailed(true);
+        onFail?.();
+      }}
+    />
+  );
+}
+
+/**
+ * Uma parte da tela que dá erro não derruba o app inteiro (antes a janela ficava em
+ * branco). Mostra um aviso com "Tentar de novo", tenta sozinha uma vez e grava o erro
+ * em data/erros-interface.log.
+ */
+export class ErrorBoundary extends Component {
+  state = { error: null, retries: 0 };
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    reportError({ message: error?.message, stack: `${error?.stack || ''}
+${info?.componentStack || ''}` }, this.props.name);
+    if (this.state.retries < 1) {
+      setTimeout(() => this.setState((s) => ({ error: null, retries: s.retries + 1 })), 300);
+    }
+  }
+
+  componentDidUpdate(prev) {
+    if (prev.resetKey !== this.props.resetKey && this.state.error) this.setState({ error: null, retries: 0 });
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="crash-box">
+        <Icon name="alert" size={22} />
+        <p>Esta parte da tela travou{this.props.name ? ` (${this.props.name})` : ''}.</p>
+        <button onClick={() => this.setState({ error: null, retries: 0 })}>Tentar de novo</button>
+      </div>
+    );
+  }
 }
 
 export const KIND_LABEL = { image: 'Imagem', video: 'Vídeo', audio: 'Áudio', text: 'Texto', model3d: 'Modelo 3D', file: 'Arquivo' };

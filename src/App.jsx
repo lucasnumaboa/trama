@@ -6,6 +6,7 @@ import Canvas from './Canvas.jsx';
 import Chat from './Chat.jsx';
 import Settings from './Settings.jsx';
 import { WorkflowsModal, PreviewModal } from './Modals.jsx';
+import { ErrorBoundary } from './ui.jsx';
 
 const LAST = 'trama:project';
 // Endereço pode abrir um projeto ou janela: #project=prj_x&modal=settings&section=models
@@ -214,6 +215,7 @@ export default function App() {
 
   return (
     <div className="app">
+      <ErrorBoundary name="lista de projetos">
       <Sidebar
         projects={projects}
         folders={folders}
@@ -236,11 +238,15 @@ export default function App() {
         comfy={comfy}
         settings={settings}
       />
+      </ErrorBoundary>
       <main className="stage">
-        <ReactFlowProvider>
-          <Canvas project={project} onOpen={openAsset} selectedIds={selected} onSelect={setSelected} focusId={focus} />
-        </ReactFlowProvider>
+        <ErrorBoundary name="canvas" resetKey={project?.id}>
+          <ReactFlowProvider>
+            <Canvas project={project} onOpen={openAsset} selectedIds={selected} onSelect={setSelected} focusId={focus} />
+          </ReactFlowProvider>
+        </ErrorBoundary>
       </main>
+      <ErrorBoundary name="chat" resetKey={project?.id}>
       <Chat
         project={project}
         running={running}
@@ -254,6 +260,7 @@ export default function App() {
         onFocus={focusAsset}
         onRename={(title) => api.renameProject(project.id, title).catch((e) => say(e.message))}
       />
+      </ErrorBoundary>
 
       {toast && <div className="toast">{toast}</div>}
       {preview && (
