@@ -21,7 +21,8 @@ export const CATEGORIES = [
   { id: 'voice_edit', label: 'Edição de voz', description: 'Troca a voz de um áudio pela voz de referência, ou separa voz e instrumental' },
   { id: 'model3d_create', label: 'Criar modelo 3D', description: 'Imagem de um objeto ou personagem para modelo 3D com textura (GLB)' },
   { id: 'model3d_rig', label: 'Esqueleto 3D (rig)', description: 'Põe esqueleto e pesos num modelo 3D (pessoa, bicho, monstro) para animar: GLB e FBX' },
-  { id: 'model3d_animate', label: 'Animar modelo 3D', description: 'Anima um modelo 3D com esqueleto humanoide: qualquer movimento descrito em texto (soco, dança, cambalhota) ou andar, correr, pular e parado em loop (GLB que toca a animação e FBX)' },
+  { id: 'model3d_animate', label: 'Animar modelo 3D', description: 'Anima um modelo 3D com esqueleto: humanoide com qualquer movimento descrito em texto (soco, dança, cambalhota), ou humanoide, bicho, quadrúpede e monstro andando, correndo, pulando, parado e voando com asas, em loop (GLB que toca a animação e FBX)' },
+  { id: 'sprite_sheet', label: 'Sprite sheet', description: 'Vídeo de um personagem se movendo (andar, correr, pular, parado) → folha de sprites com fundo transparente, GIF do ciclo e pixel art para jogo 2D' },
 ];
 
 // [categoria, workflow, nome exibido]
@@ -75,8 +76,9 @@ const BUILTIN = [
   ['model3d_create', 'trama_3d_trellis2.json', 'TRELLIS.2 (imagem → modelo 3D, mais nítido)'],
   ['model3d_create', 'trama_3d_pixal3d.json', 'Pixal3D (segue o ângulo da foto; textura menos nítida)'],
   ['model3d_rig', 'trama_3d_rig.json', 'UniRig (qualquer personagem: humanoide com ossos do Mixamo, ou bicho e monstro)'],
-  ['model3d_animate', 'trama_3d_animar.json', 'Movimento gerado no Trama (andar, correr, pular, parado em loop no lugar; esqueleto humanoide)'],
+  ['model3d_animate', 'trama_3d_animar.json', 'Movimento gerado no Trama (andar, correr, pular, parado e voar em loop no lugar; humanoide, bicho, quadrúpede e monstro com ou sem asas)'],
   ['model3d_animate', 'trama_3d_movimento.json', 'HY-Motion (qualquer movimento descrito em texto: soco, dança, cambalhota; esqueleto humanoide)'],
+  ['sprite_sheet', 'trama_sprite_video.json', 'Vídeo → sprites (BiRefNet + ciclo automático; folha transparente, GIF e pixel art)'],
 ];
 
 // Modelo padrão de fábrica de cada categoria.

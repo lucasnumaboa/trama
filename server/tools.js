@@ -532,6 +532,9 @@ const findAsset = (p, id) => {
 };
 
 // ---- Geração (nova ou como versão) -------------------------------------------
+const RIG_BONES_ERROR = /Expected \d+ bones for cls=/;
+const RIG_ATTEMPTS = 3;
+
 /** Erro claro quando o workflow não roda no ComfyUI do usuário (falta nó ou modelo). */
 async function assertRunnable(name) {
   const file = comfy.workflowFile(name);
@@ -669,7 +672,7 @@ async function generate(ctx, { name, values = {}, inputs = {}, characters = [], 
 
   let last = 0;
   try {
-    const { files, seeds } = await runWorkflow({
+    const run = () => runWorkflow({
       name: d.name,
       values: resolved,
       media,
@@ -682,6 +685,22 @@ async function generate(ctx, { name, values = {}, inputs = {}, characters = [], 
         updateAsset(p, target.id, { ...(progress !== undefined ? { progress } : {}), ...(detail ? { detail } : {}) });
       },
     });
+    // O UniRig às vezes devolve o esqueleto humanoide incompleto ("Expected 52 bones for
+    // cls='vroid', got 37 bones"). É sorteio: o mesmo modelo costuma passar na rodada seguinte.
+    let result;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        result = await run();
+        break;
+      } catch (error) {
+        if (!RIG_BONES_ERROR.test(error.message) || ctx.signal?.aborted) throw error;
+        if (attempt >= RIG_ATTEMPTS) {
+          throw new Error(`O esqueleto humanoide saiu incompleto nas ${RIG_ATTEMPTS} tentativas. Gere a imagem do personagem em pose T (braços na horizontal, dedos juntos, corpo inteiro) e refaça o modelo 3D, ou use skeleton_template "articulationxl" (não anima com os movimentos humanoides). Detalhe: ${error.message.split('\n')[0]}`);
+        }
+        updateAsset(p, target.id, { progress: 0, detail: `Esqueleto incompleto; tentando de novo (${attempt + 1}ª de ${RIG_ATTEMPTS})` });
+      }
+    }
+    const { files, seeds } = result;
     const outFiles = files.filter((f) => f.kind !== 'text');
     if (!outFiles.length) throw new Error('O workflow terminou sem gerar arquivos');
     const created = [];

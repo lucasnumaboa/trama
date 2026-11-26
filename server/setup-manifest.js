@@ -25,7 +25,7 @@ export const NODE_PACKS = {
     bundled: true,
     classes: [
       'TramaMatchVolume', 'TramaMixAudio', 'TramaAudioWindow', 'TramaAceRepaint', 'TramaRepaintSplice', 'TramaLoadMesh',
-      'TramaRiggedToGlb', 'TramaContrastBackground', 'TramaLimitMetallic', 'TramaAnimate3D', 'TramaMatchColor', 'TramaMotionToModel', 'TramaVideoMask',
+      'TramaRiggedToGlb', 'TramaContrastBackground', 'TramaLimitMetallic', 'TramaAnimate3D', 'TramaMatchColor', 'TramaMotionToModel', 'TramaVideoMask', 'TramaSpriteSheet',
     ],
     pip: [pip('librosa==1.0.0'), pip('trimesh==5.2.1')],
   },
@@ -286,6 +286,8 @@ export const WORKFLOWS = {
   'trama_remover_fundo.json': { packs: [], models: ['birefnet.safetensors'] },
   'trama_video_remover_fundo.json': { packs: ['ComfyUI-Trama'], models: ['birefnet.safetensors'] },
   'trama_video_trocar_fundo.json': { packs: ['ComfyUI-Trama'], models: ['birefnet.safetensors'] },
+  // Sprite sheet: vídeo do personagem → máscara (BiRefNet) → ciclo do movimento → folha, GIF e pixel art (TramaSpriteSheet).
+  'trama_sprite_video.json': { packs: ['ComfyUI-Trama'], models: ['birefnet.safetensors'] },
   'trama_video_h3_texto.json': { packs: [], models: ['minimax_h3_fl2va_pruned_int8_convrot.safetensors', 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', 'minimax_h3_video_vae_fp16.safetensors', 'minimax_h3_audio_vae_fp32.safetensors', 'RealESRGAN_x2plus.pth'] },
   'trama_video_h3_imagem.json': { packs: [], models: ['minimax_h3_fl2va_pruned_int8_convrot.safetensors', 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', 'minimax_h3_video_vae_fp16.safetensors', 'minimax_h3_audio_vae_fp32.safetensors', 'RealESRGAN_x2plus.pth'] },
   'trama_h3_primeiro_ultimo_quadro.json': { packs: [], models: ['minimax_h3_fl2va_pruned_int8_convrot.safetensors', 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', 'minimax_h3_video_vae_fp16.safetensors', 'minimax_h3_audio_vae_fp32.safetensors', 'RealESRGAN_x2plus.pth'] },

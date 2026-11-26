@@ -1,0 +1,303 @@
+{
+  "id": "27d0c44d-30e1-4732-a945-d348855d4173",
+  "revision": 0,
+  "last_node_id": 20,
+  "last_link_id": 5,
+  "nodes": [
+    {
+      "id": 20,
+      "type": "MarkdownNote",
+      "pos": [
+        -600,
+        0
+      ],
+      "size": [
+        520,
+        420
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Como usar",
+      "properties": {},
+      "widgets_values": [
+        "## Sprite sheet de um vídeo\nTransforma um vídeo curto de um personagem se movendo (andar, correr, pular, parado, golpe) numa **folha de sprites com fundo transparente** e num **GIF** do ciclo, mais a versão **pixel art**.\n- Melhor vídeo: personagem inteiro, de lado, fundo liso (branco), câmera acompanhando para ele ficar no centro. Faça com o Wan 2.2 (imagem → vídeo) a partir da imagem do personagem de lado.\n- **frames**: quadros na folha (8 é o comum). **skip_start**: quadros do começo ignorados. **cycle_frames**: duração do ciclo em quadros do vídeo (0 acha sozinho; force se o passo sair pela metade ou repetido).\n- **align**: pés (andar, correr, parado) ou fixo (pulo: mantém a altura).\n- **pixel_height**: altura da pixel art (0 = sem pixel art); **colors**: cores da paleta.\n- Saídas: GIF, folha PNG, GIF pixel art, folha pixel art 4x e 1x.\n- Modelo: birefnet (background_removal); nó ComfyUI-Trama."
+      ]
+    },
+    {
+      "id": 1,
+      "type": "LoadVideo",
+      "pos": [
+        360,
+        0
+      ],
+      "size": [
+        320,
+        160
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            1
+          ],
+          "slot_index": 0
+        }
+      ],
+      "title": "Vídeo",
+      "properties": {
+        "Node name for S&R": "LoadVideo"
+      },
+      "widgets_values": [
+        "example.mp4",
+        "image"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "GetVideoComponents",
+      "pos": [
+        720,
+        0
+      ],
+      "size": [
+        320,
+        160
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            3,
+            5
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [],
+          "slot_index": 1
+        },
+        {
+          "name": "fps",
+          "type": "FLOAT",
+          "links": [],
+          "slot_index": 2
+        },
+        {
+          "name": "bit_depth",
+          "type": "COMBO",
+          "links": [],
+          "slot_index": 3
+        },
+        {
+          "name": "color_space",
+          "type": "COMBO",
+          "links": [],
+          "slot_index": 4
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "GetVideoComponents"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 3,
+      "type": "LoadBackgroundRemovalModel",
+      "pos": [
+        1080,
+        0
+      ],
+      "size": [
+        320,
+        160
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "bg_model",
+          "type": "BACKGROUND_REMOVAL",
+          "links": [
+            2
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadBackgroundRemovalModel"
+      },
+      "widgets_values": [
+        "birefnet.safetensors"
+      ]
+    },
+    {
+      "id": 4,
+      "type": "TramaVideoMask",
+      "pos": [
+        1440,
+        0
+      ],
+      "size": [
+        320,
+        160
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "bg_removal_model",
+          "type": "BACKGROUND_REMOVAL",
+          "link": 2
+        },
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 3
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "type": "MASK",
+          "links": [
+            4
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "TramaVideoMask"
+      },
+      "widgets_values": [
+        4
+      ]
+    },
+    {
+      "id": 5,
+      "type": "TramaSpriteSheet",
+      "pos": [
+        1800,
+        0
+      ],
+      "size": [
+        340,
+        330
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 5
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sheet",
+          "type": "IMAGE",
+          "links": [],
+          "slot_index": 0
+        }
+      ],
+      "title": "Sprite sheet",
+      "properties": {
+        "Node name for S&R": "TramaSpriteSheet"
+      },
+      "widgets_values": [
+        8,
+        8,
+        0,
+        "pés",
+        96,
+        24,
+        10,
+        "trama/trama_sprite"
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "VIDEO"
+    ],
+    [
+      2,
+      3,
+      0,
+      4,
+      0,
+      "BACKGROUND_REMOVAL"
+    ],
+    [
+      3,
+      2,
+      0,
+      4,
+      1,
+      "IMAGE"
+    ],
+    [
+      4,
+      4,
+      0,
+      5,
+      1,
+      "MASK"
+    ],
+    [
+      5,
+      2,
+      0,
+      5,
+      0,
+      "IMAGE"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.7,
+      "offset": [
+        0,
+        0
+      ]
+    }
+  },
+  "version": 0.4
+}

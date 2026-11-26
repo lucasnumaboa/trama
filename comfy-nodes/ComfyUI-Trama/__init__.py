@@ -701,9 +701,436 @@ class TramaAnalyzeAudio:
 # este nó converte o FBX em GLB com o Blender que o ComfyUI-UniRig instalou no
 # ambiente isolado dele (comfy-env), e devolve os dois arquivos como saída.
 
-_BLENDER_SCRIPT = r'''
+# Cabeça rígida: o UniRig aprendeu com proporção adulta e, em personagem cabeçudo (chibi,
+# capacete grande), espalha o peso da cabeça entre Neck, Spine2 e ombros; a cabeça amassa
+# quando o tronco se curva. Isto deixa a cabeça 100% no osso Head acima da junta, com uma
+# transição curta com o Neck. Vértices puxados pelo braço (arma erguida, mão no rosto) e
+# fora do raio da cabeça ficam como estão. Vai no começo dos scripts do Blender abaixo.
+_RIGID_HEAD_PY = r'''
+import bpy
+
+_ARM_PARTS = ("Arm", "ForeArm", "Hand", "Thumb", "Index", "Middle", "Ring", "Pinky")
+
+
+def _trama_name(n):
+    n = n.split(":")[-1]
+    return n[len("mixamorig"):] if n.startswith("mixamorig") else n
+
+
+def _trama_bone(arm, name):
+    return next((b for b in arm.data.bones if _trama_name(b.name) == name), None)
+
+
+def _trama_is_arm(group_name):
+    n = _trama_name(group_name)
+    return (n.startswith("Left") or n.startswith("Right")) and "Shoulder" not in n and any(p in n for p in _ARM_PARTS)
+
+
+def trama_fragments(o):
+    """Pedaços da malha (a do TRELLIS é feita de pedaços soltos; o GLB ainda corta nas
+    costuras da textura): vértices na mesma posição ligam os pedaços. Devolve {vértice: id}."""
+    me = o.data
+    key = {v.index: (round(v.co.x, 5), round(v.co.y, 5), round(v.co.z, 5)) for v in me.vertices}
+    parent = {}
+
+    def find(a):
+        while parent.setdefault(a, a) != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for p in me.polygons:
+        r0 = find(key[p.vertices[0]])
+        for i in p.vertices[1:]:
+            ri = find(key[i])
+            if ri != r0:
+                parent[ri] = r0
+    return {v: find(k) for v, k in key.items()}
+
+
+def trama_skinned(objs):
+    return [o for o in objs if o.type == "MESH" and any(m.type == "ARMATURE" for m in o.modifiers)]
+
+
+def trama_rigid_head(arm, meshes):
+    """Devolve quantos vértices mudaram (0 se não há osso Head: esqueleto não humanoide)."""
+    head, neck = _trama_bone(arm, "Head"), _trama_bone(arm, "Neck")
+    if head is None or not meshes:
+        return 0
+    mw = arm.matrix_world
+    P = mw @ head.head_local
+    zs = [(o.matrix_world @ v.co).z for o in meshes for v in o.data.vertices]
+    H = max(zs) - min(zs)
+    band = max(P.z - (mw @ neck.head_local).z if neck else 0.0, 0.02 * H)
+
+    def info(o, v):
+        tot = sum(g.weight for g in v.groups) or 1.0
+        armw = sum(g.weight for g in v.groups if _trama_is_arm(o.vertex_groups[g.group].name)) / tot
+        return o.matrix_world @ v.co, armw
+
+    dists = sorted(((co.x - P.x) ** 2 + (co.y - P.y) ** 2) ** 0.5
+                   for o in meshes for v in o.data.vertices for co, armw in [info(o, v)] if co.z > P.z and armw < 0.5)
+    if not dists:
+        return 0
+    R = dists[int(0.97 * (len(dists) - 1))] * 1.1
+    changed = 0
+    for o in meshes:
+        groups = o.vertex_groups
+        hg = groups.get(head.name) or groups.new(name=head.name)
+        ng = (groups.get(neck.name) or groups.new(name=neck.name)) if neck else None
+        # Pedaço que é mais do braço (arma na mão encostada no capacete) fica com o braço inteiro.
+        frag = trama_fragments(o)
+        acc = {}
+        for v in o.data.vertices:
+            s_, n_ = acc.get(frag[v.index], (0.0, 0))
+            acc[frag[v.index]] = (s_ + info(o, v)[1], n_ + 1)
+        arm_frag = {k for k, (s_, n_) in acc.items() if s_ / n_ >= 0.5}
+        for v in o.data.vertices:
+            co, armw = info(o, v)
+            if armw >= 0.5 or frag[v.index] in arm_frag or ((co.x - P.x) ** 2 + (co.y - P.y) ** 2) ** 0.5 > R:
+                continue
+            t = (co.z - (P.z - band)) / band
+            if t <= 0:
+                continue
+            t = min(1.0, t)
+            for g in list(v.groups):
+                groups[g.group].remove([v.index])
+            if ng is None or t >= 1.0:
+                hg.add([v.index], 1.0, "REPLACE")
+            else:
+                hg.add([v.index], t, "REPLACE")
+                ng.add([v.index], 1.0 - t, "REPLACE")
+            changed += 1
+        # Farelos: pedaço pequeno preso à cabeça mas fora do contorno dela (resto da "cortina"
+        # entre a cabeça e uma arma encostada) fica flutuando ao lado do rosto: sai.
+        hidx = groups.get(head.name).index
+        stats = {}
+        for v in o.data.vertices:
+            co = o.matrix_world @ v.co
+            hw = next((g.weight for g in v.groups if g.group == hidx), 0.0)
+            s = stats.setdefault(frag[v.index], [0, 0.0, 0.0, 0.0])
+            s[0] += 1
+            s[1] += hw
+            s[2] += ((co.x - P.x) ** 2 + (co.y - P.y) ** 2) ** 0.5
+            s[3] = max(s[3], co.z)
+        orphan = {k for k, (n_, hw_, d_, top_) in stats.items()
+                  if n_ <= 400 and hw_ / n_ > 0.5 and d_ / n_ > R and top_ > P.z - band}
+        if orphan:
+            import bmesh
+            bm = bmesh.new()
+            bm.from_mesh(o.data)
+            bm.verts.ensure_lookup_table()
+            dead = [f for f in bm.faces if all(frag[x.index] in orphan for x in f.verts)]
+            bmesh.ops.delete(bm, geom=dead, context="FACES_ONLY")
+            bm.to_mesh(o.data)
+            bm.free()
+            o.data.update()
+    return changed
+'''
+
+# Malha que rasga: o TRELLIS funde partes que se encostam na imagem (arma encostada no
+# capacete, mão na coxa). Depois do rig, os triângulos que ligam ossos longe um do outro
+# esticam numa cortina quando as partes se afastam. Isto limpa pesos de ossos distantes,
+# passa cada pedaço grudado para o osso que manda nele e descostura só a cortina pequena
+# sobre um vão. Nada é apagado (apagar furava a malha).
+_MESH_FIX_PY = r'''
+import bpy
+
+
+def _trama_hops(arm):
+    """Distância em ossos entre dois ossos do esqueleto (pela árvore)."""
+    parent = {b.name: (b.parent.name if b.parent else None) for b in arm.data.bones}
+
+    def chain(n):
+        out = []
+        while n is not None:
+            out.append(n)
+            n = parent[n]
+        return out
+
+    cache = {}
+
+    def hops(a, b):
+        key = (a, b) if a < b else (b, a)
+        if key not in cache:
+            ca, cb = chain(a), chain(b)
+            sb = {n: i for i, n in enumerate(cb)}
+            cache[key] = next((i + sb[n] for i, n in enumerate(ca) if n in sb), 99)
+        return cache[key]
+
+    return hops
+
+
+def trama_bridges(arm, meshes, min_hops=4, delete=False):
+    """Acha (e se delete=True, apaga) os triângulos que ligam vértices cujo osso principal
+    fica a min_hops ou mais ossos de distância (ex.: Hand e Head = 6). Devolve quantos."""
+    import bmesh
+    bone_names = {b.name for b in arm.data.bones}
+    hops = _trama_hops(arm)
+    total = 0
+    for o in meshes:
+        names = {g.index: g.name for g in o.vertex_groups}
+        main = {}
+        for v in o.data.vertices:
+            g = max((x for x in v.groups if names.get(x.group) in bone_names), key=lambda x: x.weight, default=None)
+            main[v.index] = names[g.group] if g else None
+        bad = []
+        for p in o.data.polygons:
+            bs = {main[i] for i in p.vertices if main[i]}
+            if len(bs) < 2:
+                continue
+            bl = list(bs)
+            if max(hops(a, b) for i, a in enumerate(bl) for b in bl[i + 1:]) >= min_hops:
+                bad.append(p.index)
+        total += len(bad)
+        if delete and bad:
+            bm = bmesh.new()
+            bm.from_mesh(o.data)
+            bm.faces.ensure_lookup_table()
+            bmesh.ops.delete(bm, geom=[bm.faces[i] for i in bad], context="FACES_ONLY")
+            bm.to_mesh(o.data)
+            bm.free()
+            o.data.update()
+    return total
+
+
+def trama_clean_weights(arm, meshes, max_hops=3):
+    """Cada vértice fica só com os ossos a até max_hops do osso que mais pesa nele (um
+    vértice da mão com peso também no quadril rasga quando a mão sobe). Devolve quantos mudaram."""
+    bone_names = {b.name for b in arm.data.bones}
+    hops = _trama_hops(arm)
+    changed = 0
+    for o in meshes:
+        groups = o.vertex_groups
+        names = {g.index: g.name for g in groups}
+        for v in o.data.vertices:
+            ws = [(names.get(g.group), g.group, g.weight) for g in v.groups if names.get(g.group) in bone_names and g.weight > 0]
+            if len(ws) < 2:
+                continue
+            top = max(ws, key=lambda x: x[2])[0]
+            drop = [(n, gi, w) for n, gi, w in ws if hops(top, n) > max_hops]
+            if not drop:
+                continue
+            keep = [(n, gi, w) for n, gi, w in ws if hops(top, n) <= max_hops]
+            tot = sum(w for _, _, w in keep) or 1.0
+            for _, gi, _ in drop:
+                groups[gi].remove([v.index])
+            for _, gi, w in keep:
+                groups[gi].add([v.index], w / tot, "REPLACE")
+            changed += 1
+    return changed
+
+
+def trama_drop_crumbs(arm, meshes, min_hops=4, max_faces=300):
+    """Pedaço solto pequeno (a malha do TRELLIS é feita de pedaços) que fica preso a ossos
+    distantes também é ponte: estica quando as partes se afastam. Os pedaços são ligados
+    pela posição dos vértices (o GLB corta a malha nas costuras da textura). Devolve quantas
+    faces saíram."""
+    import bmesh
+    bone_names = {b.name for b in arm.data.bones}
+    hops = _trama_hops(arm)
+    total = 0
+    for o in meshes:
+        names = {g.index: g.name for g in o.vertex_groups}
+        main = {}
+        for v in o.data.vertices:
+            g = max((x for x in v.groups if names.get(x.group) in bone_names), key=lambda x: x.weight, default=None)
+            main[v.index] = names[g.group] if g else None
+        bm = bmesh.new()
+        bm.from_mesh(o.data)
+        bm.faces.ensure_lookup_table()
+        key = lambda v: (round(v.co.x, 5), round(v.co.y, 5), round(v.co.z, 5))
+        parent = {}
+
+        def find(a):
+            while parent.setdefault(a, a) != a:
+                parent[a] = parent[parent[a]]
+                a = parent[a]
+            return a
+
+        for f in bm.faces:
+            ks = [key(v) for v in f.verts]
+            r0 = find(ks[0])
+            for k in ks[1:]:
+                rk = find(k)
+                if rk != r0:
+                    parent[rk] = r0
+        groups = {}
+        for f in bm.faces:
+            groups.setdefault(find(key(f.verts[0])), []).append(f)
+        drop = []
+        for g in groups.values():
+            if len(g) > max_faces:
+                continue
+            bs = list({main[v.index] for f in g for v in f.verts if main[v.index]})
+            if len(bs) > 1 and max(hops(a, b) for i, a in enumerate(bs) for b in bs[i + 1:]) >= min_hops:
+                drop.extend(g)
+        if drop:
+            bmesh.ops.delete(bm, geom=drop, context="FACES_ONLY")
+            bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+            bm.to_mesh(o.data)
+            o.data.update()
+        bm.free()
+        total += len(drop)
+    return total
+
+
+def trama_settle_fragments(arm, meshes, min_hops=4, max_minority=0.35):
+    """Sem furar a malha: num pedaço solto que ficou preso a ossos distantes (a malha do
+    TRELLIS é feita de pedaços; o GLB ainda corta nas costuras da textura, então os pedaços
+    se ligam pela posição dos vértices), a parte menor passa para o osso que manda no pedaço.
+    O pedaço inteiro se move junto e nada estica. Devolve quantos vértices mudaram."""
+    bone_names = {b.name for b in arm.data.bones}
+    hops = _trama_hops(arm)
+    changed = 0
+    for o in meshes:
+        groups = o.vertex_groups
+        names = {g.index: g.name for g in groups}
+        me = o.data
+        key = {v.index: (round(v.co.x, 5), round(v.co.y, 5), round(v.co.z, 5)) for v in me.vertices}
+        parent = {}
+
+        def find(a):
+            while parent.setdefault(a, a) != a:
+                parent[a] = parent[parent[a]]
+                a = parent[a]
+            return a
+
+        for poly in me.polygons:
+            r0 = find(key[poly.vertices[0]])
+            for i in poly.vertices[1:]:
+                ri = find(key[i])
+                if ri != r0:
+                    parent[ri] = r0
+        frags = {}
+        for v in me.vertices:
+            frags.setdefault(find(key[v.index]), []).append(v)
+        for vs in frags.values():
+            tot = {}
+            main = {}
+            for v in vs:
+                best = None
+                for g in v.groups:
+                    n = names.get(g.group)
+                    if n in bone_names and g.weight > 0:
+                        tot[n] = tot.get(n, 0.0) + g.weight
+                        if best is None or g.weight > best[1]:
+                            best = (n, g.weight)
+                main[v.index] = best[0] if best else None
+            if len(tot) < 2:
+                continue
+            dom = max(tot, key=tot.get)
+            far = [v for v in vs if main[v.index] and hops(dom, main[v.index]) >= min_hops]
+            if not far or len(far) > max_minority * len(vs):
+                continue
+            dg = groups.get(dom)
+            for v in far:
+                for g in list(v.groups):
+                    groups[g.group].remove([v.index])
+                dg.add([v.index], 1.0, "REPLACE")
+                changed += 1
+    return changed
+
+
+def trama_split_seams(arm, meshes, min_hops=4):
+    """Descostura (sem apagar nada) a emenda entre partes que se mexem separadas: cada
+    triângulo fica do lado do osso que manda na maioria dos seus vértices, as arestas entre
+    lados distantes no esqueleto são separadas (vértices duplicados) e cada cópia passa a
+    seguir o lado dos seus triângulos. As duas partes se afastam sem esticar e sem furo.
+    Devolve quantas arestas foram separadas."""
+    import bmesh
+    bone_names = {b.name for b in arm.data.bones}
+    hops = _trama_hops(arm)
+    total = 0
+    for o in meshes:
+        names = {g.index: g.name for g in o.vertex_groups}
+        idx = {n: i for i, n in names.items()}
+        bm = bmesh.new()
+        bm.from_mesh(o.data)
+        dl = bm.verts.layers.deform.active
+        if dl is None:
+            bm.free()
+            continue
+
+        def main(v):
+            d = v[dl]
+            best = max(((names.get(k), w) for k, w in d.items() if names.get(k) in bone_names), key=lambda x: x[1], default=(None, 0))
+            return best[0]
+
+        # Só pontes sobre um vão: a cortina entre partes separadas (arma e capacete) tem uma
+        # aresta longa ligando vértices de lados distantes no esqueleto. Onde as partes se
+        # tocam (braço na barriga) essas arestas são curtas e a malha fica como está, porque
+        # soltar ali levaria pedaços da barriga junto com o braço.
+        lens = sorted(x.calc_length() for x in bm.edges)
+        med = lens[len(lens) // 2] if lens else 0.0
+        mains = {v: main(v) for v in bm.verts}
+        seam = set()
+        for f in bm.faces:
+            for ed in f.edges:
+                a, b = mains[ed.verts[0]], mains[ed.verts[1]]
+                if a and b and a != b and hops(a, b) >= min_hops and ed.calc_length() > 2.5 * med:
+                    seam.update(f.edges)
+                    break
+        side = {}
+        for f in bm.faces:
+            ms = [m for m in (mains[v] for v in f.verts) if m]
+            side[f.index] = max(set(ms), key=ms.count) if ms else None
+        seam = list(seam)
+        # Emenda grande é contato de verdade (braço apoiado na barriga): descosturar ali leva
+        # pedaços da barriga junto com o braço. Só a cortina pequena sobre um vão é solta.
+        touched = {f for ed in seam for f in ed.link_faces}
+        if len(touched) > 0.003 * max(1, len(bm.faces)):
+            print('TRAMA_AVISO emenda grande (%d triângulos): não descosturei' % len(touched))
+            seam = []
+        if not seam:
+            bm.free()
+            continue
+        fside = {f: side[f.index] for f in bm.faces}
+        # normal suave de cada posição, para os vértices duplicados não ficarem facetados
+        o.data.calc_normals_split() if hasattr(o.data, "calc_normals_split") else None
+        smooth_n = {}
+        for v in o.data.vertices:
+            k = (round(v.co.x, 5), round(v.co.y, 5), round(v.co.z, 5))
+            smooth_n[k] = smooth_n.get(k, v.normal * 0) + v.normal
+        bmesh.ops.split_edges(bm, edges=seam)
+        for v in bm.verts:
+            ss = [fside.get(f) for f in v.link_faces if fside.get(f)]
+            if not ss:
+                continue
+            s = max(set(ss), key=ss.count)
+            m = main(v)
+            if m and hops(m, s) >= min_hops:
+                d = v[dl]
+                for k in list(d.keys()):
+                    del d[k]
+                d[idx[s]] = 1.0
+        bm.to_mesh(o.data)
+        bm.free()
+        o.data.update()
+        try:
+            ns = []
+            for v in o.data.vertices:
+                n = smooth_n.get((round(v.co.x, 5), round(v.co.y, 5), round(v.co.z, 5)))
+                ns.append(n.normalized() if n is not None and n.length > 1e-9 else v.normal)
+            o.data.normals_split_custom_set_from_vertices(ns)
+        except Exception as err:
+            print("TRAMA_AVISO normais:", err)
+        total += len(seam)
+    return total
+
+
+def trama_fix_mesh(arm, meshes):
+    """Limpa pesos de ossos distantes, assenta os pedaços grudados no osso que manda neles e
+    descostura as emendas que sobraram. Nada é apagado. Devolve (pesos, pedaços, emendas)."""
+    c = trama_clean_weights(arm, meshes)
+    s = trama_settle_fragments(arm, meshes)
+    e = trama_split_seams(arm, meshes)
+    return c, s, e
+'''
+
+_BLENDER_SCRIPT = _RIGID_HEAD_PY + _MESH_FIX_PY + r'''
 import sys, bpy
-src, dst = sys.argv[-2], sys.argv[-1]
+src, dst, dst_fbx, rigid = sys.argv[-4:]
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.fbx(filepath=src, automatic_bone_orientation=True)
 # O FBX do UniRig vem com o esqueleto em escala 0,01 e girado: aplica escala e rotação para o
@@ -729,9 +1156,30 @@ for mat in bpy.data.materials:
                 for link in list(alpha.links):
                     mat.node_tree.links.remove(link)
                 alpha.default_value = 1.0
+if arms and rigid == "1":
+    print("TRAMA_RIGID", trama_rigid_head(arms[0], trama_skinned(bpy.data.objects)))
+if arms:
+    print("TRAMA_MESHFIX", *trama_fix_mesh(arms[0], trama_skinned(bpy.data.objects)))
 bpy.ops.export_scene.gltf(filepath=dst, export_format="GLB", export_skins=True, export_animations=True, export_yup=True, export_image_format="AUTO")
+# O FBX do Exportar sai daqui também, com os mesmos pesos do GLB.
+bpy.ops.export_scene.fbx(filepath=dst_fbx, add_leaf_bones=False, path_mode="COPY", embed_textures=True)
 arm = [o for o in bpy.data.objects if o.type == "ARMATURE"]
 print("TRAMA_BONES", sum(len(a.data.bones) for a in arm))
+'''
+
+# Só a cabeça rígida num GLB com esqueleto (rigs feitos antes dela, antes do HY-Motion).
+_RIGID_GLB_SCRIPT = _RIGID_HEAD_PY + _MESH_FIX_PY + r'''
+import sys, bpy
+src, dst = sys.argv[-2:]
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.import_scene.gltf(filepath=src)
+arm = next((o for o in bpy.data.objects if o.type == "ARMATURE"), None)
+n = trama_rigid_head(arm, trama_skinned(bpy.data.objects)) if arm else 0
+print("TRAMA_RIGID", n)
+fix = trama_fix_mesh(arm, trama_skinned(bpy.data.objects)) if arm else (0, 0, 0)
+print("TRAMA_MESHFIX", *fix)
+if n or any(fix):
+    bpy.ops.export_scene.gltf(filepath=dst, export_format="GLB", export_skins=True, export_animations=True, export_yup=True)
 '''
 
 
@@ -758,6 +1206,7 @@ def _run_blender(script_text, args, timeout=900):
     root = os.path.dirname(py)
     env = dict(os.environ)
     env["PATH"] = os.pathsep.join([root, os.path.join(root, "Library", "bin"), os.path.join(root, "Library", "mingw-w64", "bin"), os.path.join(root, "Scripts"), env.get("PATH", "")])
+    env["PYTHONIOENCODING"] = "utf-8"  # mensagens com acento chegam inteiras ao Trama
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as f:
         f.write(script_text)
         path = f.name
@@ -774,7 +1223,7 @@ def _run_blender(script_text, args, timeout=900):
     return out
 
 
-_ANIMATE_SCRIPT = r'''
+_ANIMATE_SCRIPT = _RIGID_HEAD_PY + _MESH_FIX_PY + r'''
 import sys, math, bpy
 from mathutils import Vector, Quaternion
 
@@ -788,6 +1237,9 @@ arm = next((o for o in bpy.data.objects if o.type == "ARMATURE"), None)
 if arm is None:
     print("TRAMA_ERROR o modelo não tem esqueleto: passe antes pelo workflow de esqueleto (rig).")
     sys.exit(2)
+# Rigs feitos antes da cabeça rígida também ganham (nos novos não muda nada).
+print("TRAMA_RIGID", trama_rigid_head(arm, trama_skinned(bpy.data.objects)))
+print("TRAMA_MESHFIX", *trama_fix_mesh(arm, trama_skinned(bpy.data.objects)))
 
 
 def find(name):
@@ -883,8 +1335,8 @@ RUN = dict(thigh=42, knee0=15, knee=75, arm=45, elbow=85, bob=0.05, drop=0.06, l
 JUMP = [  # (tempo, parâmetros)
     (0.00, dict()),
     (0.35, dict(thighL=55, thighR=55, kneeL=100, kneeR=100, footL=45, footR=45, hips_up=-0.28, lean=25, swingL=-50, swingR=-50, elbowL=20, elbowR=20)),
-    (0.50, dict(thighL=-5, thighR=-5, kneeL=0, kneeR=0, footL=-35, footR=-35, hips_up=0.12, lean=-4, swingL=150, swingR=150, elbowL=10, elbowR=10)),
-    (0.75, dict(thighL=35, thighR=35, kneeL=70, kneeR=70, footL=10, footR=10, hips_up=0.45, lean=6, swingL=120, swingR=120, elbowL=25, elbowR=25)),
+    (0.50, dict(thighL=-5, thighR=-5, kneeL=0, kneeR=0, footL=-35, footR=-35, hips_up=0.12, lean=-4, swingL=120, swingR=120, elbowL=15, elbowR=15)),
+    (0.75, dict(thighL=35, thighR=35, kneeL=70, kneeR=70, footL=10, footR=10, hips_up=0.45, lean=6, swingL=100, swingR=100, elbowL=25, elbowR=25)),
     (1.00, dict(thighL=12, thighR=12, kneeL=18, kneeR=18, footL=-10, footR=-10, hips_up=0.04, lean=4, swingL=60, swingR=60)),
     (1.15, dict(thighL=48, thighR=48, kneeL=90, kneeR=90, footL=42, footR=42, hips_up=-0.24, lean=20, swingL=-20, swingR=-20, elbowL=30, elbowR=30)),
     (1.55, dict()),
@@ -976,6 +1428,745 @@ print("TRAMA_ANIM", motion, frames, round(total, 2))
 '''
 
 
+# Animação de criatura (esqueleto articulationxl do UniRig, ossos sem nome): as cadeias de
+# ossos são separadas pela malha (pernas tocam o chão; asas são membranas largas em par;
+# cauda fica atrás; braços saem do alto do corpo) e cada uma ganha seu movimento.
+_CREATURE_SCRIPT = _MESH_FIX_PY + r'''
+import sys, math, json, bpy
+from mathutils import Vector, Quaternion
+
+src, dst_glb, dst_fbx, motion, seconds = sys.argv[-5:]
+seconds = float(seconds)
+FPS = 30
+
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.import_scene.gltf(filepath=src)
+arm = next((o for o in bpy.data.objects if o.type == "ARMATURE"), None)
+if arm is None:
+    print("TRAMA_ERROR o modelo não tem esqueleto: passe antes pelo workflow de esqueleto (rig).")
+    sys.exit(2)
+meshes = [o for o in bpy.data.objects if o.type == "MESH" and any(m.type == "ARMATURE" for m in o.modifiers)]
+# Sem a correção de malha dos humanoides: nos bichos testados (lobo, ogro) ela abriu buracos
+# e soltou riscos nas patas, e sem ela a malha se move limpa.
+bones = arm.data.bones
+inv = arm.matrix_world.inverted()
+UP = (inv.to_3x3() @ Vector((0, 0, 1))).normalized()
+rad = math.radians
+
+# ---- geometria (espaço da armadura) ----------------------------------------------
+pts, owner = [], []  # ponto e o osso que mais pesa nele
+for o in meshes:
+    vs = o.data.vertices
+    names = {g.index: g.name for g in o.vertex_groups}
+    for v in list(vs)[:: max(1, len(vs) // 8000)]:
+        pts.append(inv @ (o.matrix_world @ v.co))
+        g = max(v.groups, key=lambda x: x.weight, default=None)
+        owner.append(names.get(g.group) if g else None)
+if not pts:
+    print("TRAMA_ERROR o modelo não tem malha presa ao esqueleto.")
+    sys.exit(2)
+hgt = lambda p: p.dot(UP)
+ground = min(hgt(p) for p in pts)
+H = max(hgt(p) for p in pts) - ground
+flat = lambda p: p - UP * hgt(p)
+center = sum((flat(p) for p in pts), Vector()) / len(pts)
+
+# ---- cadeias: de cada ponta até o osso onde o esqueleto se divide -------------------
+def chain_to(leaf):
+    c = [leaf]
+    b = leaf
+    while b.parent is not None and len(b.parent.children) == 1:
+        b = b.parent
+        c.insert(0, b)
+    return c
+
+def leaves_under(b):
+    out, stack = [], [b]
+    while stack:
+        x = stack.pop()
+        if x.children:
+            stack.extend(x.children)
+        else:
+            out.append(x)
+    return out
+
+def path(a, leaf):
+    """Ossos de a até a ponta (inclusive)."""
+    c = [leaf]
+    while c[0].name != a.name and c[0].parent is not None:
+        c.insert(0, c[0].parent)
+    return c
+
+# Membros: cada ponta sobe até onde o esqueleto se divide; se tudo o que sai dali é curto
+# (dedos, garras, dedos do pé, chifres, orelhas), sobe mais um trecho: mão, pé e cabeça
+# viram um membro só com o braço, a perna ou o pescoço de onde saem.
+def limb_root(leaf):
+    c = chain_to(leaf)
+    while c[0].parent is not None and c[0].parent.parent is not None:
+        a = c[0].parent
+        if max(sum(x.length for x in path(a, l)[1:]) for l in leaves_under(a)) < 0.2 * H:
+            c = chain_to(a)
+        else:
+            break
+    return c[0]
+
+leaves = [b for b in bones if not b.children]
+tip = lambda c: c[-1].tail_local
+base = lambda c: c[0].head_local
+length = lambda c: sum(b.length for b in c)
+roots_ = []
+for lf in leaves:
+    r = limb_root(lf)
+    if r not in roots_:
+        roots_.append(r)
+def inside(b, r):
+    while b is not None:
+        if b.name == r.name:
+            return True
+        b = b.parent
+    return False
+roots_ = [r for r in roots_ if not any(o.name != r.name and inside(r, o) for o in roots_)]
+chains, LIMB = [], {}
+for r in roots_:
+    lv = leaves_under(r)
+    low = min(lv, key=lambda l: hgt(l.tail_local))
+    if hgt(low.tail_local) - ground < 0.12 * H:
+        main = low  # perna: a ponta que toca o chão
+    else:
+        main = max(lv, key=lambda l: (l.tail_local - r.head_local).length)
+    c = path(r, main)
+    chains.append(c)
+    LIMB[c[0].name] = {x.name for x in [r] + [y for l in lv for y in path(r, l)]}
+
+def is_leg(c):
+    drop = hgt(base(c)) - hgt(tip(c))
+    reach = (flat(tip(c)) - flat(base(c))).length
+    # toca o chão, desce bastante e é mais em pé do que deitada (cauda que encosta no chão não)
+    return hgt(tip(c)) - ground < 0.12 * H and drop > 0.15 * H and reach < 0.9 * drop
+
+legs = [c for c in chains if is_leg(c)]
+leg_set = {b.name for c in legs for b in c}
+
+# ---- para onde a criatura olha ------------------------------------------------------
+F = (inv.to_3x3() @ Vector((0, -1, 0)))  # frente padrão do TRELLIS (olha para a câmera)
+F = (F - UP * F.dot(UP)).normalized()
+feet = [flat(tip(c)) for c in legs]
+if len(feet) >= 4:
+    # eixo longo dos pés = frente/trás; o lado da cabeça é o mais alto da malha
+    m = sum(feet, Vector()) / len(feet)
+    cov = [[sum((p - m)[i] * (p - m)[j] for p in feet) for j in range(3)] for i in range(3)]
+    best, axis = -1, F
+    for cand in (Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1)), Vector((1, 1, 0)).normalized(), Vector((1, -1, 0)).normalized()):
+        cand = (cand - UP * cand.dot(UP))
+        if cand.length < 1e-6:
+            continue
+        cand.normalize()
+        var = sum(cand[i] * cand[j] * cov[i][j] for i in range(3) for j in range(3))
+        if var > best:
+            best, axis = var, cand
+    for _ in range(20):  # iteração de potência para o eixo principal exato
+        nv = Vector([sum(cov[i][j] * axis[j] for j in range(3)) for i in range(3)])
+        nv = nv - UP * nv.dot(UP)
+        if nv.length < 1e-9:
+            break
+        axis = nv.normalized()
+    proj = sorted(p.dot(axis) for p in pts)
+    a_lo, a_hi = proj[int(0.15 * len(proj))], proj[int(0.85 * len(proj))]
+    top_hi = max((hgt(p) for p in pts if p.dot(axis) >= a_hi), default=0)
+    top_lo = max((hgt(p) for p in pts if p.dot(axis) <= a_lo), default=0)
+    F = axis if top_hi >= top_lo else -axis
+elif len(feet) == 2:
+    S0 = feet[1] - feet[0]
+    if S0.length > 1e-6:
+        cand = UP.cross(S0).normalized()
+        F = cand if cand.dot(F) >= 0 else -cand
+S = F.cross(UP).normalized()  # lado
+L = max(p.dot(F) for p in pts) - min(p.dot(F) for p in pts)
+
+def side_of(c):
+    return 1 if (flat(tip(c)) - center).dot(S) >= 0 else -1
+
+def spread(c):
+    """Largura da malha presa à cadeia, em fração do comprimento: asa (membrana) é larga,
+    braço e cauda são tubos finos."""
+    names = LIMB.get(c[0].name) or {b.name for b in c}
+    d = vec_of(c)
+    if d.length < 1e-6:
+        return 0.0
+    d = d.normalized()
+    o = base(c)
+    r = sorted(((p - o) - d * (p - o).dot(d)).length for p, w in zip(pts, owner) if w in names)
+    return r[int(0.9 * (len(r) - 1))] / max(1e-6, length(c)) if len(r) > 10 else 0.0
+
+vec_of = lambda c: tip(c) - base(c)
+base_f = lambda c: (flat(base(c)) - center).dot(F)
+rest_chains = [c for c in chains if not (leg_set & {b.name for b in c})]
+def wing_like(c):
+    lat = abs((flat(tip(c)) - center).dot(S))
+    rise = hgt(tip(c)) - hgt(base(c))
+    return length(c) > 0.22 * H and lat > 0.25 * max(H, L) and hgt(base(c)) - ground > 0.35 * H and rise > -0.25 * H and spread(c) > 0.45
+
+# Asas vêm em par: uma de cada lado, de tamanho parecido (um braço com arco grande não é asa).
+cand = [c for c in rest_chains if wing_like(c)]
+paired = [c for c in cand if any(side_of(o) != side_of(c) and 0.6 < length(o) / length(c) < 1.6 for o in cand if o is not c)]
+wings, arms, tails, heads = [], [], [], []
+for c in rest_chains:
+    lat = abs((flat(tip(c)) - center).dot(S))
+    fwd = (flat(tip(c)) - center).dot(F)
+    rise = hgt(tip(c)) - hgt(base(c))
+    if c in paired:
+        wings.append(c)
+    elif base_f(c) < -0.32 * L and fwd < -0.42 * L and fwd < base_f(c) and lat < 0.35 * max(H, L):
+        tails.append(c)  # nasce na traseira e vai para trás (espinho nas costas nasce no meio)
+    elif len(legs) < 4 and lat > 0.12 * H and hgt(tip(c)) < hgt(base(c)) + 0.05 * H and hgt(base(c)) - ground > 0.4 * H:
+        arms.append(c)
+    else:
+        heads.append(c)
+head = max(heads, key=lambda c: hgt(tip(c)) + 0.5 * (flat(tip(c)) - center).dot(F)) if heads else None
+# Ponta curta no alto (chifre, orelha): quem acena é o osso de onde ela sai, o crânio.
+HEADB = None
+if head:
+    HEADB = head[0] if length(head) > 0.12 * H or head[0].parent is None else head[0].parent
+claimed = {b.name for g in (legs, wings, arms, tails) for c in g for b in c} | ({b.name for b in head} if head else set())
+root = next(b for b in bones if b.parent is None)
+spine = []
+if HEADB:
+    b = HEADB.parent
+    while b is not None:
+        if b.name not in claimed:
+            spine.insert(0, b)
+        b = b.parent
+
+quad = len(legs) >= 4
+summary = dict(legs=len(legs), wings=len(wings), arms=len(arms), tails=len(tails), head=bool(head), spine=len(spine), bones=len(bones),
+               kind="quadrupede" if quad else "bipede" if len(legs) >= 2 else "sem pernas")
+print("TRAMA_CREATURE " + json.dumps(summary))
+print("TRAMA_CHAINS " + json.dumps([dict(n=len(c), len=round(length(c) / H, 2), spread=round(spread(c), 2), lat=round(abs((flat(tip(c)) - center).dot(S)) / H, 2)) for c in rest_chains]))
+
+if motion == "fly" and not wings:
+    print("TRAMA_ERROR este esqueleto não tem asas para voar (achei %d pernas, %d braços, %d caudas). Use walk, run, idle ou jump." % (len(legs), len(arms), len(tails)))
+    sys.exit(2)
+if motion in ("walk", "run", "jump") and len(legs) < 2:
+    print("TRAMA_ERROR não achei pernas que tocam o chão neste esqueleto (achei %d). Use idle%s." % (len(legs), " ou fly" if wings else ""))
+    sys.exit(2)
+
+# ---- rotação em torno de um eixo da armadura, aplicada no osso -----------------------
+def q(axis, deg):
+    return Quaternion(axis, rad(deg))
+
+def to_local(b, q_arm):
+    m = b.matrix_local.to_3x3().normalized().to_quaternion()
+    return m.inverted() @ q_arm @ m
+
+def sign(v, axis, target):
+    return 1 if (q(axis, 10) @ v).dot(target) > v.dot(target) else -1
+
+# Sentidos de cada cadeia (calculados uma vez, na pose de repouso).
+def vec(c):
+    return tip(c) - base(c)
+
+PITCH_UP = 1 if (q(S, 10) @ F).dot(UP) > F.dot(UP) else -1   # girar +θ em S levanta a frente
+ROLL_UP = 1 if (q(F, 10) @ S).dot(UP) > S.dot(UP) else -1    # girar +θ em F levanta o lado +S
+
+LEG = []
+for c in legs:
+    # Osso curto no começo (escápula, osso do quadril): a perna de verdade começa no próximo.
+    J = c[1:] if len(c) >= 4 and c[0].length < 0.12 * length(c) else c
+    fwd_part = (flat(tip(c)) - center).dot(F)
+    LEG.append(dict(c=c, J=J, side=side_of(c), front=fwd_part > 0, pos=fwd_part,
+                    swing=sign(vec(c), S, F),
+                    knee=sign(J[1].tail_local - J[1].head_local, S, -F) if len(J) > 1 else 0))
+WING = [dict(c=c, flap=sign(vec(c), F, UP), side=side_of(c)) for c in wings]
+
+# Pernas por IK: cada pé segue um alvo (preso ao chão no apoio, em arco no passo) e o
+# Blender dobra o joelho para o lado em que ele já dobra no modelo. Assim a pata da frente
+# não dobra ao contrário, as patas não se cruzam e o pé não atravessa o chão.
+# Como num rig de quadrúpede: o IK vai até o pulso/jarrete (cabeça do último osso, a pata) e a
+# pata é guiada à parte por um segundo alvo: plana e parada no chão no apoio, dobrada no passo
+# (a pata da frente dobra o pulso para trás; a de trás aponta os dedos para baixo). Com 5 ossos
+# o primeiro é a escápula, que fica fora do IK e balança um pouco com o passo.
+for d in LEG:
+    J = d["J"]
+    d["leg_h"] = max(1e-4, hgt(base(J)) - ground)            # altura da perna
+    d["girdle"] = J[0] if len(J) >= 5 else None
+    if len(J) >= 3 and quad:   # bípede (pé de gente, ogro) fica com o IK de antes
+        d["paw"] = J[-1]
+        d["ik"] = J[-2]
+        d["chain"] = len(J) - 1 - (1 if d["girdle"] is not None else 0)
+    else:
+        d["paw"] = None
+        d["ik"] = J[-1]
+        d["chain"] = len(J)
+    d["foot"] = d["ik"].tail_local.copy()                    # ponta do alvo, em repouso
+    if d["paw"] is not None:
+        pv = d["paw"].tail_local - d["paw"].head_local
+        d["pawv"] = pv
+        d["flex_s"] = sign(pv, S, -F)                        # girar + leva os dedos para trás
+FEET = {}                                                    # perna -> deslocamento do alvo
+FLEX = {}                                                    # perna -> dobra da pata (°)
+
+def arm_rest(c):
+    """Braço aberto em T (comum no modelo de origem): baixa até ~60° abaixo da horizontal."""
+    v = vec(c).normalized()
+    elev = math.degrees(math.asin(max(-1.0, min(1.0, v.dot(UP)))))
+    if elev < -35:
+        return Quaternion()
+    need = 60 + elev
+    sgn = 1 if (q(F, 10) @ v).dot(UP) < v.dot(UP) else -1
+    return q(F, sgn * need)
+
+ARM = []
+for c in arms:
+    # Clavícula: primeiro osso deitado, saindo do meio do peito. Girar o braço por ela leva o
+    # ombro inteiro junto e rasga o peito (ogro). O giro vai no úmero (U[0]) e o cotovelo é U[1].
+    v0 = c[0].tail_local - c[0].head_local
+    lat0 = abs((flat(c[0].head_local) - center).dot(S))
+    clav = len(c) >= 3 and abs(v0.normalized().dot(UP)) < 0.6 and lat0 < 0.18 * H
+    U = c[1:] if clav else c
+    uv = tip(c) - U[0].head_local
+    v = uv.normalized()
+    elev = math.degrees(math.asin(max(-1.0, min(1.0, v.dot(UP)))))
+    rest = Quaternion()
+    if elev >= -35:   # braço aberto em T: baixa até ~60° abaixo da horizontal
+        sgn = 1 if (q(F, 10) @ v).dot(UP) < v.dot(UP) else -1
+        rest = q(F, sgn * (60 + elev))
+    rv = rest @ uv
+    side_c = side_of(c)
+    # girar +θ em F afasta a ponta do corpo? (abrir o braço para o lado)
+    out = 1 if ((q(F, 10) @ rv).dot(S) * side_c) > (rv.dot(S) * side_c) else -1
+    # cotovelo: dobrar para a frente (antebraço sobe à frente)
+    elbow = sign(U[1].tail_local - U[1].head_local, S, F) if len(U) > 1 else 0
+    ARM.append(dict(c=c, U=U, clav=c[0] if clav else None, side=side_c, rest=rest, swing=sign(rv, S, F), out=out, elbow=elbow))
+print("TRAMA_ARMS " + json.dumps([dict(clav=bool(d["clav"]), n=len(d["U"])) for d in ARM]))
+
+# Peito preso ao braço: o UniRig às vezes dá peso do úmero à pele do peito e da barriga, e
+# qualquer balanço do braço puxa essa pele como uma cortina. Pele que fica mais perto do
+# tronco (coluna e clavícula) do que dos ossos do braço passa para o tronco.
+from mathutils.geometry import intersect_point_line
+
+def seg_dist(p, b):
+    h, t = b.head_local, b.tail_local
+    c, k = intersect_point_line(p, h, t)
+    if k < 0:
+        c = h
+    elif k > 1:
+        c = t
+    return (p - c).length
+
+def torso_weights():
+    if not ARM or not spine:
+        return 0
+    moved = 0
+    torso = list(spine) + [d["clav"] for d in ARM if d["clav"] is not None]
+    for d in ARM:
+        # o braço inteiro abaixo do úmero (cotovelo, mão, dedos)
+        sub = set()
+        stack = [d["U"][0]]
+        while stack:
+            b = stack.pop()
+            sub.add(b.name)
+            stack.extend(b.children)
+        segs = [b for b in d["U"][:3]]
+        for o in meshes:
+            idx = {g.name: g.index for g in o.vertex_groups}
+            gname = {g.index: g.name for g in o.vertex_groups}
+            vg = {g.name: g for g in o.vertex_groups}
+            for v in o.data.vertices:
+                ws = [(gname[g.group], g.weight) for g in v.groups if gname[g.group] in sub and g.weight > 0]
+                if not ws:
+                    continue
+                p = inv @ (o.matrix_world @ v.co)
+                da = min(seg_dist(p, b) for b in segs)
+                tb = min(torso, key=lambda b: seg_dist(p, b))
+                dt = seg_dist(p, tb)
+                # dt < 0.8·da: pele do tronco (passa toda); 0,8..1,1: faixa de transição
+                f = smooth((1.1 - dt / max(da, 1e-6)) / 0.3)
+                if f <= 0:
+                    continue
+                tot = 0.0
+                for n, w in ws:
+                    vg[n].add([v.index], w * (1 - f), "REPLACE")
+                    tot += w * f
+                if tb.name not in vg:
+                    vg[tb.name] = o.vertex_groups.new(name=tb.name)
+                vg[tb.name].add([v.index], tot, "ADD")
+                moved += 1
+    return moved
+
+def smooth(x):
+    x = max(0.0, min(1.0, x))
+    return x * x * (3 - 2 * x)
+
+print("TRAMA_TORSO %d" % torso_weights())
+
+# Na emenda entre braço e corpo (braço encostado na barriga) o peso pula de um osso para o
+# outro numa fileira de triângulos, que vira cortina quando o braço sai. Os pesos dessa faixa
+# (e de duas voltas em torno) são alisados entre vizinhos: a pele estica aos poucos.
+def band_smooth(iters=6, rings=2):
+    if not ARM:
+        return 0
+    armset = set()
+    for d in ARM:
+        stack = [d["U"][0]]
+        while stack:
+            b = stack.pop(); armset.add(b.name); stack.extend(b.children)
+    bone_names = {b.name for b in bones}
+    n_band = 0
+    for o in meshes:
+        me = o.data
+        gn = {g.index: g.name for g in o.vertex_groups}
+        W = []
+        for v in me.vertices:
+            W.append({gn[g.group]: g.weight for g in v.groups if gn.get(g.group) in bone_names and g.weight > 0})
+        dom = [max(w, key=w.get) if w else None for w in W]
+        key = [(round(v.co.x, 5), round(v.co.y, 5), round(v.co.z, 5)) for v in me.vertices]
+        same = {}
+        for i, k in enumerate(key):
+            same.setdefault(k, []).append(i)
+        nb = [set() for _ in me.vertices]
+        for e in me.edges:
+            a, b = e.vertices
+            nb[a].add(b); nb[b].add(a)
+        for grp in same.values():
+            if len(grp) > 1:
+                for i in grp:
+                    nb[i].update(j for j in grp if j != i)
+        band = set()
+        for p in me.polygons:
+            ins = [dom[i] in armset for i in p.vertices if dom[i]]
+            if any(ins) and not all(ins):
+                band.update(p.vertices)
+        for _ in range(rings):
+            band |= {j for i in band for j in nb[i]}
+        n_band += len(band)
+        for _ in range(iters):
+            new = {}
+            for i in band:
+                acc = dict(W[i]); c = 1.0
+                for j in nb[i]:
+                    for n, w in W[j].items():
+                        acc[n] = acc.get(n, 0.0) + w
+                    c += 1
+                tot = sum(acc.values()) or 1.0
+                new[i] = {n: w / tot for n, w in acc.items() if w / tot > 0.01}
+            for i, w in new.items():
+                W[i] = w
+        # cópias do mesmo ponto (costura da textura) ficam com o mesmo peso, senão a pele abre
+        for grp in same.values():
+            if len(grp) > 1 and any(i in band for i in grp):
+                acc = {}
+                for i in grp:
+                    for n, w in W[i].items():
+                        acc[n] = acc.get(n, 0.0) + w / len(grp)
+                for i in grp:
+                    W[i] = dict(acc)
+                    band.add(i)
+        vg = {g.name: g for g in o.vertex_groups}
+        for i in band:
+            for g in list(me.vertices[i].groups):
+                if gn.get(g.group) in bone_names:
+                    o.vertex_groups[g.group].remove([i])
+            tot = sum(W[i].values()) or 1.0
+            for n, w in W[i].items():
+                if n not in vg:
+                    vg[n] = o.vertex_groups.new(name=n)
+                vg[n].add([i], w / tot, "REPLACE")
+    return n_band
+
+print("TRAMA_BAND %d" % band_smooth(iters=10))
+TAIL = [dict(c=c) for c in tails]
+
+# Fase de cada perna: quadrúpede anda em sequência lateral (traseira esq., dianteira esq.,
+# traseira dir., dianteira dir.) e trota em diagonal; bípede alterna; mais pernas vão em ondas.
+def leg_phase(i, gait):
+    d = LEG[i]
+    if quad and len(LEG) == 4:
+        if gait == "walk":
+            return {(1, False): 0.0, (1, True): 0.25, (-1, False): 0.5, (-1, True): 0.75}[(d["side"], d["front"])]
+        return 0.0 if (d["side"] == 1) == d["front"] else 0.5
+    same = sorted([j for j, e in enumerate(LEG) if e["side"] == d["side"]], key=lambda j: -LEG[j]["pos"])
+    k = same.index(i)
+    return (0.5 * (d["side"] < 0) + (0.5 if gait != "walk" else 0.25) * k) % 1.0
+
+# duty = fração do ciclo com o pé no chão (andar ~0,65; trote/corrida < 0,5).
+GAITS = {
+    "walk": dict(T=1.1 if quad else 1.0, duty=0.65 if quad else 0.6, stride=0.30, step_h=0.16, swing=16 if quad else 22, lift=38, bob=0.010, vault=1,
+                 roll=3.0, yaw=3.0, arm=12, tail=9, head=3.0, wing=5, wing_T=2.2),
+    "run": dict(T=0.6 if quad else 0.7, duty=0.45 if quad else 0.4, stride=0.45, step_h=0.28, swing=26 if quad else 34, lift=70, bob=0.022, vault=-1,
+                roll=4.0, yaw=4.0, arm=20, tail=14, head=4.0, wing=8, wing_T=1.2),
+}
+
+pose_bones = arm.pose.bones
+for pb in pose_bones:
+    pb.rotation_mode = "QUATERNION"
+arm.animation_data_create()
+arm.animation_data.action = bpy.data.actions.new(motion)
+
+def add(rots, b, qa):
+    rots[b.name] = qa @ rots.get(b.name, Quaternion())
+
+def chain_rot(rots, c, axis, deg, falloff=1.0, lag=0.0, t=0.0, T=1.0):
+    for k, b in enumerate(c):
+        a = deg * (falloff ** k)
+        if lag:
+            a = deg * (falloff ** k) * math.sin(2 * math.pi * (t / T) - lag * k)
+        add(rots, b, q(axis, a))
+
+def smooth(x):
+    x = max(0.0, min(1.0, x))
+    return x * x * (3 - 2 * x)
+
+def step(u, duty):
+    """Ângulo do passo (-1..1, + = pé na frente), quanto o pé está erguido (0..1) e quanto
+    o corpo está sobre ele (0..1, 1 no meio do apoio)."""
+    if u < duty:  # apoio: o pé vai para trás em ritmo constante
+        s = u / duty
+        return 1 - 2 * s, 0.0, math.cos(math.pi * (s - 0.5))
+    s = (u - duty) / (1 - duty)  # balanço: volta rápido, em arco
+    return -1 + 2 * smooth(s), math.sin(math.pi * s), 0.0
+
+def gait_pose(rots, t, g, T):
+    pel, che, nh, nf = 0.0, 0.0, 0, 0
+    roll = 0.0
+    theta = {}
+    for i, d in enumerate(LEG):
+        u = (t / T + leg_phase(i, motion)) % 1.0
+        th, lift, load = step(u, g["duty"])
+        theta[i] = th
+        # metade do passo e altura do pé, em fração da altura da perna
+        FEET[i] = F * (g["stride"] * d["leg_h"] * th) + UP * (g["step_h"] * d["leg_h"] * lift)
+        # pata: o calcanhar sobe no fim do apoio, dobra no passo e abre de novo antes de pousar
+        heel = max(0.0, (u - (g["duty"] - 0.12)) / 0.12) if g["duty"] - 0.12 < u < g["duty"] else 0.0
+        FLEX[i] = (80 if (d["front"] and quad) else 50) * max(0.3 * heel, lift ** 0.7 if lift > 0 else 0.0)
+        if d["girdle"] is not None:
+            add(rots, d["girdle"], q(S, d["swing"] * (6 if motion == "walk" else 10) * th))
+        if d["front"] and quad:
+            che += load
+            nf += 1
+        else:
+            pel += load
+            nh += 1
+        roll += -d["side"] * lift * (0 if (quad and d["front"]) else 1)
+    pel = pel / max(1, nh)
+    che = che / max(1, nf) if nf else pel
+    v = g["vault"] * g["bob"] * H
+    hp, hc = v * (pel - 0.5), v * (che - 0.5)
+    pitch = math.degrees(math.atan2(hc - hp, 0.5 * max(L, 1e-6))) if quad else 0.0
+    root_rot = q(S, PITCH_UP * pitch) @ q(F, ROLL_UP * g["roll"] * roll / max(1, nh))
+    # coluna curva de leve para os lados, em S (frente e trás opostas)
+    p = 2 * math.pi * t / T
+    n = len(spine)
+    for k, b in enumerate(spine):
+        add(rots, b, q(UP, g["yaw"] * math.sin(p) * (1 if k >= n / 2 else -1) * 2 / max(1, n)))
+    # braços: contra a perna do outro lado
+    for d in ARM:
+        opp = [theta[i] for i, e in enumerate(LEG) if e["side"] != d["side"]]
+        a = -(sum(opp) / len(opp)) if opp else math.sin(p)
+        add(rots, d["U"][0], q(S, d["swing"] * g["arm"] * a) @ d["rest"])
+        if len(d["U"]) > 1:
+            add(rots, d["U"][1], q(S, d["elbow"] * (12 + 10 * max(0.0, a))))
+    for d in TAIL:
+        chain_rot(rots, d["c"], UP, g["tail"], lag=0.8, t=t, T=T)
+        chain_rot(rots, d["c"][:1], S, 0.4 * g["tail"] * math.sin(4 * math.pi * t / T - 1.0))
+    for d in WING:
+        add(rots, d["c"][0], q(F, d["flap"] * g["wing"] * math.sin(2 * math.pi * t / g["wing_T"])))
+    if HEADB:
+        # cabeça segura o olhar (desfaz a inclinação do corpo) e acena atrasada
+        add(rots, HEADB, q(S, PITCH_UP * (-0.8 * pitch + g["head"] * math.sin(4 * math.pi * t / T - 1.2))))
+    return UP * ((hp + hc) / 2), root_rot
+
+def fly_pose(rots, t, T):
+    # bate as asas, encolhe as pernas e flutua
+    p = 2 * math.pi * t / T
+    for d in WING:
+        for k, b in enumerate(d["c"]):
+            a = (38 if k == 0 else 22 * (0.8 ** k)) * math.sin(p - 0.6 * k)
+            add(rots, b, q(F, d["flap"] * a))
+    for d in LEG:
+        J = d["J"]
+        add(rots, J[0], q(S, -d["swing"] * 30))
+        if len(J) > 1:
+            add(rots, J[1], q(S, d["knee"] * 50))
+    for d in ARM:
+        add(rots, d["U"][0], q(S, d["swing"] * (15 + 10 * math.sin(p))) @ d["rest"])
+    for d in TAIL:
+        chain_rot(rots, d["c"], S, 6, lag=0.7, t=t, T=T)
+    if HEADB:
+        add(rots, HEADB, q(S, PITCH_UP * 3 * math.sin(p + 1)))
+    return UP * (0.25 * H + 0.03 * H * math.sin(p + math.pi)), q(S, PITCH_UP * 2 * math.sin(p))
+
+def idle_pose(rots, t, T):
+    p = 2 * math.pi * t / T
+    for i in range(len(LEG)):
+        FEET[i] = Vector()
+    for b in spine:
+        add(rots, b, q(S, 1.5 * math.sin(p)))
+    for d in ARM:
+        add(rots, d["U"][0], q(S, d["swing"] * 3 * math.sin(p + 0.5)) @ d["rest"])
+    for d in TAIL:
+        chain_rot(rots, d["c"], UP, 8, lag=0.6, t=t, T=T)
+    for d in WING:
+        add(rots, d["c"][0], q(F, d["flap"] * 4 * math.sin(p)))
+    if HEADB:
+        add(rots, HEADB, q(UP, 8 * math.sin(p * 0.5)) @ q(S, PITCH_UP * 2 * math.sin(p + 1)))
+    return UP * (0.004 * H * math.sin(p)), Quaternion()
+
+# Pulo em fases: agacha jogando os braços para trás, impulso esticando com os braços para
+# cima, encolhe no ar, estende as pernas para pousar, amortece e volta com um leve repique.
+# up = altura (fração de H), flex = pernas dobradas, arms = braços (° para a frente; pouco no
+# ombro e mais no cotovelo: braço encostado no corpo puxa a pele quando o ombro gira muito),
+# lean = tronco para a frente (°), head = cabeça para cima (°), pitch = frente do bicho para cima (°).
+JUMP = [
+    (0.00, dict(up=0.0, flex=0.0, spread=0, arms=0, lean=0, head=0, pitch=0)),
+    (0.30, dict(up=-0.10, flex=1.0, spread=0, arms=-12, lean=18, head=-6, pitch=-4)),
+    (0.42, dict(up=0.03, flex=-0.15, spread=0, arms=18, lean=-6, head=8, pitch=12)),
+    (0.66, dict(up=0.32, flex=0.75, spread=0, arms=22, lean=0, head=4, pitch=2)),
+    (0.90, dict(up=0.10, flex=0.10, spread=0, arms=15, lean=4, head=0, pitch=-8)),
+    (1.00, dict(up=-0.11, flex=1.0, spread=0, arms=6, lean=20, head=-8, pitch=-6)),
+    (1.25, dict(up=0.015, flex=-0.05, spread=0, arms=-3, lean=-3, head=2, pitch=1)),
+    (1.55, dict(up=0.0, flex=0.0, spread=0, arms=0, lean=0, head=0, pitch=0)),
+]
+
+def jump_pose(rots, t):
+    k = JUMP[-1][1]
+    for (t0, a), (t1, b) in zip(JUMP, JUMP[1:]):
+        if t <= t1:
+            x = smooth((t - t0) / max(1e-6, t1 - t0))
+            k = {n: a[n] + (b[n] - a[n]) * x for n in a}
+            break
+    air = max(0.0, k["up"]) / 0.32
+    for i, d in enumerate(LEG):
+        tuck = max(0.0, k["flex"]) * air
+        lift_up = max(0.0, k["up"]) * H + 0.35 * d["leg_h"] * tuck
+        if quad:  # no ar a dianteira encolhe para a frente; a traseira estica para trás
+            FEET[i] = UP * lift_up + F * ((0.25 if d["front"] else -0.30) * d["leg_h"] * air)
+        else:
+            FEET[i] = UP * lift_up
+        FLEX[i] = (60 if (d["front"] and quad) else 35) * tuck
+    for d in ARM:
+        # para a frente e um pouco para fora: não cruza na frente do rosto
+        add(rots, d["U"][0], q(S, d["swing"] * k["arms"]) @ q(F, d["out"] * k["spread"]) @ d["rest"])
+        if len(d["U"]) > 1:   # cotovelo dobra mais quando o braço vai à frente
+            add(rots, d["U"][1], q(S, d["elbow"] * (15 + 0.6 * max(0.0, k["arms"]))))
+        if d["clav"] is not None:   # ombro sobe só um pouco
+            add(rots, d["clav"], q(S, d["swing"] * 0.12 * max(0.0, k["arms"])))
+    n = max(1, len(spine))
+    qd = 0.35 if quad else 1.0   # bicho de quatro patas não dobra o tronco nem baixa a cabeça como gente
+    for b in spine:
+        add(rots, b, q(S, -PITCH_UP * qd * k["lean"] / n))
+    if HEADB:
+        add(rots, HEADB, q(S, PITCH_UP * (k["head"] if not quad else max(0.0, k["head"]))))
+    for d in WING:
+        add(rots, d["c"][0], q(F, d["flap"] * 30 * air * math.sin(t * 14)))
+    for d in TAIL:
+        chain_rot(rots, d["c"], S, PITCH_UP * 0.6 * k["lean"] - 10 * air)
+    up = k["up"] * (0.6 if quad and k["up"] < 0 else 1.0)   # quadrúpede agacha menos
+    return UP * (up * H), (q(S, PITCH_UP * (k["pitch"] if k["pitch"] > 0 else 0.5 * k["pitch"])) if quad else Quaternion())
+
+if motion in GAITS:
+    g = GAITS[motion]
+    T = g["T"]
+elif motion == "idle":
+    T = 3.0
+elif motion == "fly":
+    T = 0.7
+elif motion == "jump":
+    T = JUMP[-1][0]
+else:
+    print("TRAMA_ERROR movimento desconhecido: " + motion)
+    sys.exit(2)
+
+loops = 1 if motion == "jump" else max(1, round(seconds / T))
+frames = int(round(T * loops * FPS))
+scene = bpy.context.scene
+scene.render.fps = FPS
+scene.frame_start, scene.frame_end = 0, (frames if motion == "jump" else frames - 1)
+root_m = root.matrix_local.to_3x3().normalized()
+
+USE_IK = motion != "fly" and bool(LEG)
+targets = {}
+toes = {}
+if USE_IK:
+    for i, d in enumerate(LEG):
+        e = bpy.data.objects.new("trama_pe_%d" % i, None)
+        scene.collection.objects.link(e)
+        e.location = arm.matrix_world @ d["foot"]
+        targets[i] = e
+        con = pose_bones[d["ik"].name].constraints.new("IK")
+        con.target = e
+        con.chain_count = d["chain"]
+        con.use_tail = True
+        if d["paw"] is not None:
+            te = bpy.data.objects.new("trama_dedo_%d" % i, None)
+            scene.collection.objects.link(te)
+            toes[i] = te
+            ct = pose_bones[d["paw"].name].constraints.new("DAMPED_TRACK")
+            ct.target = te
+            ct.track_axis = "TRACK_Y"
+
+for f in range(scene.frame_start, scene.frame_end + 1):
+    t = f / FPS
+    rots = {}
+    if motion in GAITS:
+        offset, root_rot = gait_pose(rots, t, g, T)
+    elif motion == "fly":
+        offset, root_rot = fly_pose(rots, t, T)
+    elif motion == "idle":
+        offset, root_rot = idle_pose(rots, t, T)
+    else:
+        offset, root_rot = jump_pose(rots, t)
+    rots[root.name] = root_rot @ rots.get(root.name, Quaternion())
+    for name, qa in rots.items():
+        pb = pose_bones[name]
+        pb.rotation_quaternion = to_local(bones[name], qa)
+        pb.keyframe_insert("rotation_quaternion", frame=f)
+    rp = pose_bones[root.name]
+    rp.location = root_m.inverted() @ offset
+    rp.keyframe_insert("location", frame=f)
+    for i, e in targets.items():
+        e.location = arm.matrix_world @ (LEG[i]["foot"] + FEET.get(i, Vector()))
+        e.keyframe_insert("location", frame=f)
+    for i, te in toes.items():
+        d = LEG[i]
+        pv = q(S, d["flex_s"] * FLEX.get(i, 0.0)) @ d["pawv"]
+        te.location = arm.matrix_world @ (d["foot"] + FEET.get(i, Vector()) + pv * 1.5)
+        te.keyframe_insert("location", frame=f)
+
+if USE_IK:
+    # IK vira rotação comum nos ossos (o GLB e o FBX não levam o IK)
+    bpy.context.view_layer.objects.active = arm
+    arm.select_set(True)
+    bpy.ops.object.mode_set(mode="POSE")
+    bpy.ops.pose.select_all(action="SELECT")
+    bpy.ops.nla.bake(frame_start=scene.frame_start, frame_end=scene.frame_end, only_selected=False, visual_keying=True,
+                     clear_constraints=True, use_current_action=True, bake_types={"POSE"})
+    bpy.ops.object.mode_set(mode="OBJECT")
+    for e in list(targets.values()) + list(toes.values()):
+        bpy.data.objects.remove(e, do_unlink=True)
+
+arm["trama_front"] = list(arm.matrix_world.to_3x3() @ F)
+bpy.ops.file.pack_all()
+bpy.ops.export_scene.gltf(filepath=dst_glb, export_format="GLB", export_skins=True, export_animations=True, export_yup=True, export_force_sampling=True, export_extras=True)
+bpy.ops.export_scene.fbx(filepath=dst_fbx, bake_anim=True, add_leaf_bones=False, path_mode="COPY", embed_textures=True)
+print("TRAMA_ANIM", motion, frames, round(T * loops, 2), summary["kind"])
+'''
+
+
+def _is_humanoid_glb(path):
+    """O GLB tem esqueleto humanoide (ossos do Mixamo)? Lê só o JSON do GLB, sem Blender."""
+    import json
+    import struct
+    try:
+        with open(path, "rb") as f:
+            head = f.read(20)
+            size = struct.unpack("<I", head[12:16])[0]
+            doc = json.loads(f.read(size))
+    except Exception:
+        return True  # na dúvida, o caminho humanoide explica o que falta
+    names = {str(n.get("name", "")).split(":")[-1].replace("mixamorig", "") for n in doc.get("nodes", [])}
+    return {"Hips", "LeftUpLeg", "RightUpLeg", "LeftArm", "RightArm"} <= names
+
+
 class TramaLoadMesh:
     """Carrega um modelo 3D da pasta input para os nós do UniRig.
 
@@ -1036,7 +2227,10 @@ class TramaRiggedToGlb:
             "required": {
                 "fbx_output_path": ("STRING", {"forceInput": True, "tooltip": "FBX com esqueleto (saída do UniRig: Auto Rig), relativo à pasta output."}),
                 "filename_prefix": ("STRING", {"default": "trama/trama_3d_rig"}),
-            }
+            },
+            "optional": {
+                "rigid_head": ("BOOLEAN", {"default": True, "tooltip": "Cabeça como um bloco (peso todo no osso Head): evita a cabeça amassar em personagem cabeçudo, chibi ou de capacete. Só vale para esqueleto humanoide (mixamo)."}),
+            },
         }
 
     RETURN_TYPES = ("STRING",)
@@ -1046,7 +2240,7 @@ class TramaRiggedToGlb:
     CATEGORY = "Trama"
     DESCRIPTION = "Converte o FBX com esqueleto do UniRig em GLB (com ossos e pesos) e salva os dois na pasta output."
 
-    def convert(self, fbx_output_path, filename_prefix):
+    def convert(self, fbx_output_path, filename_prefix, rigid_head=True):
         import os
         import shutil
         import subprocess
@@ -1062,7 +2256,6 @@ class TramaRiggedToGlb:
         stem = f"{filename}_{counter:05}_"
         glb = os.path.join(full_folder, stem + ".glb")
         fbx = os.path.join(full_folder, stem + ".fbx")
-        shutil.copy(src, fbx)
 
         py = _blender_python()
         root = os.path.dirname(py)
@@ -1072,13 +2265,16 @@ class TramaRiggedToGlb:
             f.write(_BLENDER_SCRIPT)
             script = f.name
         try:
-            r = subprocess.run([py, script, fbx, glb], env=env, capture_output=True, text=True, timeout=600)
+            r = subprocess.run([py, script, src, glb, fbx, "1" if rigid_head else "0"], env=env, capture_output=True, text=True, timeout=600, encoding="utf-8", errors="replace")
         finally:
             os.unlink(script)
         if r.returncode != 0 or not os.path.exists(glb):
             raise RuntimeError(f"O Blender não converteu o FBX: {(r.stderr or r.stdout)[-800:]}")
+        if not os.path.exists(fbx):  # o card sai mesmo assim; o Exportar usa o FBX cru do UniRig
+            shutil.copy(src, fbx)
         bones = next((l.split()[-1] for l in r.stdout.splitlines() if l.startswith("TRAMA_BONES")), "?")
-        print(f"[Trama] GLB com esqueleto: {glb} ({bones} ossos)")
+        rigid = next((l.split()[-1] for l in r.stdout.splitlines() if l.startswith("TRAMA_RIGID")), "0")
+        print(f"[Trama] GLB com esqueleto: {glb} ({bones} ossos, cabeça rígida em {rigid} vértices)")
         # Só o GLB é o resultado (vira o card); o FBX fica ao lado, com o mesmo nome, para o Exportar.
         files = [{"filename": os.path.basename(glb), "subfolder": subfolder, "type": "output"}]
         rel = os.path.relpath(glb, out_dir)
@@ -1087,15 +2283,18 @@ class TramaRiggedToGlb:
 
 # ---- Imagem para 3D: objeto escuro ------------------------------------------
 class TramaAnimate3D:
-    """Anima um modelo 3D com esqueleto humanoide (template mixamo do UniRig).
+    """Anima um modelo 3D com esqueleto: humanoide (template mixamo) ou criatura
+    (template articulationxl: bicho, quadrúpede, monstro com ou sem asas).
 
     Não usa arquivos de animação de fora: monta o movimento direto nos ossos, quadro a
-    quadro, no Blender do ambiente do UniRig. Acha para onde o personagem olha pelos
-    ossos do pé, baixa os braços da T-pose e gera andar, correr e parado (em loop) ou
-    pular. Salva GLB (o card, que toca a animação) e FBX (Exportar).
+    quadro, no Blender do ambiente do UniRig. Humanoide: acha a frente pelos ossos do pé,
+    baixa os braços da T-pose e gera andar, correr, parado ou pular. Criatura: separa as
+    cadeias de ossos pela malha (pernas que tocam o chão, asas largas em par, cauda, cabeça,
+    braços) e gera o passo do quadrúpede (sequência lateral; trote em diagonal), do bípede,
+    bater de asas (fly), cauda e respiração. Salva GLB (o card) e FBX (Exportar).
     """
 
-    MOTIONS = ["walk", "run", "jump", "idle"]
+    MOTIONS = ["walk", "run", "jump", "idle", "fly"]
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1103,7 +2302,7 @@ class TramaAnimate3D:
             "required": {
                 "model": ("STRING", {"default": "3d/modelo_com_esqueleto.glb",
                                      "tooltip": "GLB com esqueleto (saída do workflow de esqueleto), dentro da pasta input."}),
-                "motion": (cls.MOTIONS, {"default": "walk", "tooltip": "walk = andar, run = correr, jump = pular, idle = parado respirando."}),
+                "motion": (cls.MOTIONS, {"default": "walk", "tooltip": "walk = andar, run = correr (trote no quadrúpede), jump = pular, idle = parado respirando, fly = voar batendo as asas (só criatura com asas)."}),
                 "seconds": ("FLOAT", {"default": 2.0, "min": 0.5, "max": 20.0, "step": 0.5,
                                       "tooltip": "Duração do loop (andar, correr, parado); arredonda para ciclos inteiros. O pulo dura 1,55 s."}),
                 "filename_prefix": ("STRING", {"default": "trama/trama_3d_animado"}),
@@ -1130,10 +2329,14 @@ class TramaAnimate3D:
         stem = f"{filename}_{counter:05}_"
         glb = os.path.join(full_folder, stem + ".glb")
         fbx = os.path.join(full_folder, stem + ".fbx")
-        out = _run_blender(_ANIMATE_SCRIPT, [src, glb, fbx, motion, str(seconds)])
+        creature = motion == "fly" or not _is_humanoid_glb(src)
+        out = _run_blender(_CREATURE_SCRIPT if creature else _ANIMATE_SCRIPT, [src, glb, fbx, motion, str(seconds)])
         if not os.path.exists(glb):
             raise RuntimeError(f"O Blender não gerou a animação: {out[-800:]}")
         info = next((l for l in out.splitlines() if l.startswith("TRAMA_ANIM")), "")
+        body = next((l[len("TRAMA_CREATURE "):] for l in out.splitlines() if l.startswith("TRAMA_CREATURE ")), "")
+        if body:  # o que o Trama achou no esqueleto da criatura (pernas, asas, cauda)
+            info = f"{info} {body}"
         print(f"[Trama] animação: {glb} ({info})")
         files = [{"filename": os.path.basename(glb), "subfolder": subfolder, "type": "output"}]
         gif = _render_gif(glb, subfolder)
@@ -1197,7 +2400,13 @@ center = (lo + hi) / 2
 ext = hi - lo
 
 front = Vector((0, -1, 0))
-if arm:
+# Criatura (esqueleto articulationxl): a animação grava para onde ela olha.
+saved_front = arm.get("trama_front") if arm else None
+if saved_front is not None and len(saved_front) == 3:
+    fv = Vector((saved_front[0], saved_front[1], 0))
+    if fv.length > 1e-6:
+        front = fv.normalized()
+if arm and saved_front is None:
     pb = arm.pose.bones
     acc = Vector((0, 0, 0))
     for f in range(f0, f1 + 1, 3):
@@ -1209,7 +2418,8 @@ if arm:
                 acc += Vector((d.x, d.y, 0))
     if acc.length > 1e-6:
         front = acc.normalized()
-ang = math.radians(35)
+# Humanoide: de frente a 35° (mostra o rosto). Criatura: quase de lado, para ver o passo.
+ang = math.radians(65 if saved_front is not None else 35)
 side = Vector((-front.y, front.x, 0))
 dirv = (front * math.cos(ang) + side * math.sin(ang)).normalized()
 dirv.z = 0.25
@@ -1314,7 +2524,22 @@ class TramaMotionToModel:
             raise RuntimeError(f"Modelo não encontrado: {model}")
         out_dir = folder_paths.get_output_directory()
         tmp_rel = os.path.join("trama", "_hymotion_tmp")
-        res = export_cls().export(motion_data, src, tmp_rel, "movimento", 0.0, 0.0)
+        # Cabeça rígida antes do retarget (rigs feitos antes dela amassam a cabeça ao curvar).
+        rigid_src = os.path.join(out_dir, tmp_rel, "rigid_" + os.path.basename(src))
+        try:
+            os.makedirs(os.path.dirname(rigid_src), exist_ok=True)
+            if os.path.exists(rigid_src):
+                os.remove(rigid_src)
+            _run_blender(_RIGID_GLB_SCRIPT, [src, rigid_src], timeout=300)
+            if os.path.exists(rigid_src):
+                src = rigid_src
+        except Exception as e:  # segue com o modelo como veio
+            print(f"[Trama] cabeça rígida não aplicada: {e}")
+        try:
+            res = export_cls().export(motion_data, src, tmp_rel, "movimento", 0.0, 0.0)
+        finally:
+            if src == rigid_src and os.path.exists(rigid_src):
+                os.remove(rigid_src)
         made = [os.path.join(out_dir, p) for p in str(res[0]).splitlines() if p.strip().endswith(".glb")]
         made = [p for p in made if os.path.exists(p)]
         if not made:
@@ -1564,5 +2789,190 @@ class TramaVideoMask:
         return (torch.cat(out, dim=0),)
 
 
-NODE_CLASS_MAPPINGS = {"TramaMatchVolume": TramaMatchVolume, "TramaAnalyzeAudio": TramaAnalyzeAudio, "TramaMixAudio": TramaMixAudio, "TramaAudioWindow": TramaAudioWindow, "TramaAceRepaint": TramaAceRepaint, "TramaRepaintSplice": TramaRepaintSplice, "TramaTranscribeAudio": TramaTranscribeAudio, "TramaLoadMesh": TramaLoadMesh, "TramaRiggedToGlb": TramaRiggedToGlb, "TramaContrastBackground": TramaContrastBackground, "TramaLimitMetallic": TramaLimitMetallic, "TramaImageStyle": TramaImageStyle, "TramaAnimate3D": TramaAnimate3D, "TramaMatchColor": TramaMatchColor, "TramaMotionToModel": TramaMotionToModel, "TramaVideoMask": TramaVideoMask}
-NODE_DISPLAY_NAME_MAPPINGS = {"TramaMatchVolume": "Igualar volume (Trama)", "TramaAnalyzeAudio": "Analisar áudio (Trama)", "TramaMixAudio": "Juntar áudios (Trama)", "TramaAudioWindow": "Trecho para regerar (Trama)", "TramaAceRepaint": "Repaint do ACE-Step 1.5 (Trama)", "TramaRepaintSplice": "Colar trecho na música (Trama)", "TramaTranscribeAudio": "Transcrever voz (Trama)", "TramaLoadMesh": "Carregar modelo 3D (Trama)", "TramaRiggedToGlb": "Esqueleto: FBX para GLB (Trama)", "TramaContrastBackground": "Fundo com contraste para 3D (Trama)", "TramaLimitMetallic": "Limitar metal (Trama)", "TramaImageStyle": "Desenho chapado? (Trama)", "TramaAnimate3D": "Animar modelo 3D (Trama)", "TramaMatchColor": "Cor da textura igual à origem (Trama)", "TramaMotionToModel": "Movimento no modelo 3D (Trama)", "TramaVideoMask": "Máscara do vídeo em lotes (Trama)"}
+def _sprite_cycle(alphas, n, skip, force_period):
+    """Índices de n quadros num ciclo de movimento.
+
+    O período sai da diferença entre a silhueta de cada quadro (alinhada pelos pés) e a
+    do primeiro: o ciclo fecha no primeiro mínimo depois de passar por um máximo.
+    """
+    import numpy as np
+    from PIL import Image
+
+    def sil(a):
+        ys, xs = np.nonzero(a)
+        h, w = a.shape
+        if len(xs) == 0:
+            return np.zeros((96, 96), np.float32)
+        cx, b = int(xs.mean()), int(ys.max())
+        pad = np.zeros((h * 2, w * 2), np.float32)
+        pad[h - b + h // 2: h - b + h // 2 + h, w - cx: w - cx + w] = a
+        return np.asarray(Image.fromarray((pad * 255).astype(np.uint8)).resize((96, 96), Image.BOX), np.float32) / 255.0
+
+    idx_all = list(range(min(skip, max(0, len(alphas) - n - 2)), len(alphas)))
+    S = [sil(alphas[i]) for i in idx_all]
+    d = np.array([np.abs(x - S[0]).mean() for x in S])
+    period = None
+    for p in range(6, len(S)):
+        if d[p] < d[p - 1] and (p + 1 >= len(S) or d[p] <= d[p + 1]) and d[:p].max() > 2 * d[p]:
+            period = p
+            break
+    if period is None:
+        period = min(len(S) - 1, 16)
+    if force_period:
+        period = min(force_period, len(S) - 1)
+    period = max(period, 1)
+    return [idx_all[round(i * period / n)] for i in range(n)], period
+
+
+def _sprite_pixel(cells, px_h, colors):
+    """Pixel art: altura px_h, alfa binário, paleta comum a todos os quadros e contorno de 1 px."""
+    from PIL import Image, ImageFilter, ImageChops
+    cw, ch = cells[0].size
+    pw, ph = max(1, round(cw * px_h / ch)), px_h
+    small = [im.resize((pw, ph), Image.BOX) for im in cells]
+    strip = Image.new("RGB", (pw * len(small), ph), (0, 0, 0))
+    for k, im in enumerate(small):
+        rgb = Image.new("RGB", im.size, (0, 0, 0))
+        rgb.paste(im, mask=im.getchannel("A").point(lambda a: 255 if a > 110 else 0))
+        strip.paste(rgb, (k * pw, 0))
+    pal = strip.quantize(colors=colors + 1, method=Image.Quantize.MEDIANCUT)
+    out = []
+    for im in small:
+        a = im.getchannel("A").point(lambda v: 255 if v > 110 else 0)
+        q = im.convert("RGB").quantize(palette=pal, dither=Image.Dither.NONE).convert("RGBA")
+        q.putalpha(a)
+        edge = ImageChops.subtract(a.filter(ImageFilter.MaxFilter(3)), a)
+        res = Image.new("RGBA", q.size, (0, 0, 0, 0))
+        res.paste(Image.new("RGBA", q.size, (20, 16, 24, 255)), mask=edge)
+        res.paste(q, mask=a)
+        out.append(res)
+    return out
+
+
+class TramaSpriteSheet:
+    """Sprite sheet de um vídeo: escolhe um ciclo do movimento e monta folha, GIF e pixel art.
+
+    Recebe os quadros do vídeo e a máscara do personagem (BiRefNet). Acha o período do
+    ciclo pela silhueta, pega N quadros nele, alinha pelos pés (ou com recorte fixo, que
+    mantém a altura do pulo) e grava: GIF, folha PNG com fundo transparente e, se pedido,
+    a versão pixel art (GIF, folha 4x e folha 1x).
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+                "mask": ("MASK",),
+                "frames": ("INT", {"default": 8, "min": 2, "max": 32, "tooltip": "Quadros na folha."}),
+                "skip_start": ("INT", {"default": 8, "min": 0, "max": 200, "tooltip": "Quadros do começo do vídeo ignorados (o movimento ainda está engrenando)."}),
+                "cycle_frames": ("INT", {"default": 0, "min": 0, "max": 400, "tooltip": "Duração do ciclo em quadros do vídeo; 0 acha sozinho."}),
+                "align": (["pés", "fixo"], {"default": "pés", "tooltip": "pés: alinha cada quadro pelos pés (andar, correr, parado). fixo: mesmo recorte em todos (pulo, para manter a altura)."}),
+                "pixel_height": ("INT", {"default": 96, "min": 0, "max": 512, "tooltip": "Altura da pixel art em pixels; 0 não faz pixel art."}),
+                "colors": ("INT", {"default": 24, "min": 2, "max": 255, "tooltip": "Cores da paleta da pixel art."}),
+                "fps": ("INT", {"default": 10, "min": 1, "max": 60}),
+                "filename_prefix": ("STRING", {"default": "trama/trama_sprite"}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("sheet",)
+    FUNCTION = "build"
+    OUTPUT_NODE = True
+    CATEGORY = "Trama"
+
+    def build(self, images, mask, frames, skip_start, cycle_frames, align, pixel_height, colors, fps, filename_prefix):
+        import os
+        import numpy as np
+        import torch
+        import folder_paths
+        from PIL import Image
+
+        n_img = images.shape[0]
+        if mask.shape[0] != n_img:
+            raise RuntimeError(f"A máscara tem {mask.shape[0]} quadros e o vídeo {n_img}.")
+        if n_img < frames + 2:
+            raise RuntimeError(f"O vídeo tem só {n_img} quadros; precisa de mais que {frames + 2}.")
+        if tuple(mask.shape[1:]) != tuple(images.shape[1:3]):
+            mask = torch.nn.functional.interpolate(mask[:, None].float(), size=tuple(images.shape[1:3]), mode="bilinear")[:, 0]
+        mask = mask.float().cpu()
+        alphas = mask.numpy() > 0.4
+        idx, period = _sprite_cycle(alphas, frames, skip_start, cycle_frames)
+        print(f"[Trama] sprite: ciclo de {period} quadros, usando {idx}")
+
+        def rgba(i):
+            rgb = (images[i].cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+            a = (mask[i].numpy() * 255).clip(0, 255).astype(np.uint8)
+            a[a < 100] = 0
+            return Image.fromarray(np.dstack([rgb, a]), "RGBA")
+
+        ims = [rgba(i) for i in idx]
+        if align == "fixo":
+            box = None
+            for i in idx:
+                ys, xs = np.nonzero(alphas[i])
+                if len(xs) == 0:
+                    continue
+                b = (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+                box = b if box is None else (min(box[0], b[0]), min(box[1], b[1]), max(box[2], b[2]), max(box[3], b[3]))
+            if box is None:
+                raise RuntimeError("Não achei o personagem no vídeo (máscara vazia).")
+            box = (box[0] - 6, box[1] - 6, box[2] + 6, box[3] + 6)
+            cells = [im.crop(box) for im in ims]
+        else:
+            feet = []
+            box_w = box_h = 0
+            for i in idx:
+                ys, xs = np.nonzero(alphas[i])
+                if len(xs) == 0:
+                    raise RuntimeError("Não achei o personagem em algum quadro do ciclo (máscara vazia).")
+                cx, b = int(xs.mean()), int(ys.max())
+                feet.append((cx, b))
+                box_w = max(box_w, 2 * max(cx - int(xs.min()), int(xs.max()) - cx) + 12)
+                box_h = max(box_h, b - int(ys.min()) + 12)
+            cells = [im.crop((cx - box_w // 2, b - box_h + 6, cx - box_w // 2 + box_w, b + 6)) for im, (cx, b) in zip(ims, feet)]
+
+        out_dir = folder_paths.get_output_directory()
+        full_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(filename_prefix, out_dir)
+        os.makedirs(full_folder, exist_ok=True)
+        stem = f"{filename}_{counter:05}_"
+        made = []
+
+        def save_gif(seq, name, scale=1):
+            fr = []
+            for im in seq:
+                bg = Image.new("RGB", im.size, (235, 235, 235))
+                bg.paste(im, (0, 0), im)
+                if scale != 1:
+                    bg = bg.resize((bg.width * scale, bg.height * scale), Image.NEAREST)
+                fr.append(bg.convert("P", palette=Image.ADAPTIVE, colors=255))
+            fr[0].save(os.path.join(full_folder, name), save_all=True, append_images=fr[1:],
+                       duration=int(1000 / fps), loop=0, disposal=2)
+            made.append(name)
+
+        def save_sheet(seq, name, scale=1):
+            cw, ch = seq[0].size
+            sh = Image.new("RGBA", (cw * len(seq), ch), (0, 0, 0, 0))
+            for k, im in enumerate(seq):
+                sh.paste(im, (k * cw, 0))
+            if scale != 1:
+                sh = sh.resize((sh.width * scale, sh.height * scale), Image.NEAREST)
+            sh.save(os.path.join(full_folder, name))
+            made.append(name)
+            return sh
+
+        save_gif(cells, stem + ".gif")
+        sheet = save_sheet(cells, stem + "folha.png")
+        if pixel_height > 0:
+            pix = _sprite_pixel(cells, pixel_height, colors)
+            save_gif(pix, stem + "pixel.gif", scale=4)
+            save_sheet(pix, stem + "pixel_folha_x4.png", scale=4)
+            save_sheet(pix, stem + "pixel_folha.png")
+        print(f"[Trama] sprite: {', '.join(made)} (célula {cells[0].size[0]}x{cells[0].size[1]})")
+        files = [{"filename": f, "subfolder": subfolder, "type": "output"} for f in made]
+        t = torch.from_numpy(np.asarray(sheet.convert("RGB"), np.float32) / 255.0)[None]
+        return {"ui": {"images": files}, "result": (t,)}
+
+
+NODE_CLASS_MAPPINGS = {"TramaMatchVolume": TramaMatchVolume, "TramaAnalyzeAudio": TramaAnalyzeAudio, "TramaMixAudio": TramaMixAudio, "TramaAudioWindow": TramaAudioWindow, "TramaAceRepaint": TramaAceRepaint, "TramaRepaintSplice": TramaRepaintSplice, "TramaTranscribeAudio": TramaTranscribeAudio, "TramaLoadMesh": TramaLoadMesh, "TramaRiggedToGlb": TramaRiggedToGlb, "TramaContrastBackground": TramaContrastBackground, "TramaLimitMetallic": TramaLimitMetallic, "TramaImageStyle": TramaImageStyle, "TramaAnimate3D": TramaAnimate3D, "TramaMatchColor": TramaMatchColor, "TramaMotionToModel": TramaMotionToModel, "TramaVideoMask": TramaVideoMask, "TramaSpriteSheet": TramaSpriteSheet}
+NODE_DISPLAY_NAME_MAPPINGS = {"TramaMatchVolume": "Igualar volume (Trama)", "TramaAnalyzeAudio": "Analisar áudio (Trama)", "TramaMixAudio": "Juntar áudios (Trama)", "TramaAudioWindow": "Trecho para regerar (Trama)", "TramaAceRepaint": "Repaint do ACE-Step 1.5 (Trama)", "TramaRepaintSplice": "Colar trecho na música (Trama)", "TramaTranscribeAudio": "Transcrever voz (Trama)", "TramaLoadMesh": "Carregar modelo 3D (Trama)", "TramaRiggedToGlb": "Esqueleto: FBX para GLB (Trama)", "TramaContrastBackground": "Fundo com contraste para 3D (Trama)", "TramaLimitMetallic": "Limitar metal (Trama)", "TramaImageStyle": "Desenho chapado? (Trama)", "TramaAnimate3D": "Animar modelo 3D (Trama)", "TramaMatchColor": "Cor da textura igual à origem (Trama)", "TramaMotionToModel": "Movimento no modelo 3D (Trama)", "TramaVideoMask": "Máscara do vídeo em lotes (Trama)", "TramaSpriteSheet": "Sprite sheet do vídeo (Trama)"}
